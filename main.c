@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <assert.h>
 #include <time.h>
 #include <stdarg.h>
@@ -311,6 +312,36 @@ void playerRenderHead(struct Player* p_player) {
     SDL_RenderCopyEx(renderer, head_text, NULL, &head_rect, rotation, NULL, 0);
 }
 
+void playerRenderScore(
+    struct Player* p_player, 
+    char* message, int x, int y,
+    int* width, int* height
+) {
+    size_t len = strlen(message);
+
+    sprintf(message+len-3, "%3d", p_player->score);
+    SDL_Color score_color = {0x56, 0x73, 0x45, 255};
+    SDL_Surface* score_surf = TTF_RenderText_Solid(font, message, score_color);
+    SDL_Texture* score_text = SDL_CreateTextureFromSurface(renderer, score_surf);
+
+    SDL_FreeSurface(score_surf);
+
+    SDL_Rect score_rect;
+    TTF_SizeText(font, message, &score_rect.w, &score_rect.h);
+    score_rect.x = x;
+    score_rect.y = y;
+    SDL_RenderCopy(renderer, score_text, NULL, &score_rect);
+
+    SDL_DestroyTexture(score_text);
+
+    if (width) {
+        *width = score_rect.w;
+    }
+    if (height) {
+        *height = score_rect.h;
+    }
+}
+
 int main() {
     if (!init()) {
         goto cleanup; 
@@ -340,6 +371,10 @@ int main() {
     p2.bindings[RIGHT] = SDLK_d;
     p2.bindings[UP] = SDLK_w;
     p2.bindings[DOWN] = SDLK_s;
+
+    p2.pos.x = GRID_SIZE-1;
+    p2.pos.y = GRID_SIZE-1;
+    p2.direc = LEFT;
 
     while (!p1.game_over && !p2.game_over) {
         uint32_t curr_time = SDL_GetTicks();
@@ -390,30 +425,20 @@ int main() {
         playerRenderHead(&p1);
         playerRenderHead(&p2);
 
-        /*
         // Score
-        if (player.score > 999) {
-            printf("Score muito grande");
+        if (p1.score > 999 || p2.score > 999) {
+            fprintf(stderr, "Score muito grande!\n");
             goto cleanup_media;
         }
-        // 3 bytes for numbers
-        char score_message[15] = "Pontuacao: ";
 
-        sprintf(score_message, "Pontuacao: %d", player.score);
-        SDL_Color score_color = {0x56, 0x73, 0x45, 255};
-        SDL_Surface* score_surf = TTF_RenderText_Solid(font, score_message, score_color);
-        SDL_Texture* score_text = SDL_CreateTextureFromSurface(renderer, score_surf);
+        char message[14] = "Player 1: 000";
 
-        SDL_FreeSurface(score_surf);
+        int y;
+        playerRenderScore(&p1, message, 0, 0, NULL, &y);
 
-        SDL_Rect score_rect;
-        TTF_SizeText(font, "Game Over", &score_rect.w, &score_rect.h);
-        score_rect.x = 0;
-        score_rect.y = 0;
-        SDL_RenderCopy(renderer, score_text, NULL, &score_rect);
+        message[7] = '2';
 
-        SDL_DestroyTexture(score_text);
-        */
+        playerRenderScore(&p2, message, 0, y, NULL, NULL);
 
         // Render to screen
         SDL_RenderPresent(renderer);
