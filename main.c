@@ -15,6 +15,8 @@
 #define GRID_SIZE 20
 #define BODY_SIZE (GRID_SIZE*GRID_SIZE)
 
+#define PLAYERS_SIZE 2
+
 #define DIREC_BUFFER_SIZE 2
 #define APPLES_SIZE 100
 
@@ -209,7 +211,9 @@ void playerOnInput(struct Player* p_player, SDL_Keycode key) {
 }
 
 void playerCheckMoveCollide(
-    struct Player* p_player, uint32_t curr_time,
+    struct Player* p_player, 
+    struct Player* players, size_t players_size,
+    uint32_t curr_time,
     struct Apple* apples, size_t apples_size
 ) {
     if (curr_time - p_player->last_movem_frame > p_player->movem_delay) {
@@ -272,9 +276,12 @@ void playerCheckMoveCollide(
             p_player->body[0] = last_pos;
         }
 
-        for (size_t i = 0; i < p_player->body_size; i++) {
-            if (p_player->body[i].x == p_player->pos.x && p_player->body[i].y == p_player->pos.y) {
-                p_player->game_over = true;
+        // check colision
+        for (size_t i = 0; i < players_size; i++) {
+            for (size_t j = 0; j < players[i].body_size; j++) {
+                if (players[i].body[j].x == p_player->pos.x && players[i].body[j].y == p_player->pos.y) {
+                    p_player->game_over = true;
+                }
             }
         }
     }
@@ -312,33 +319,31 @@ void playerRenderHead(struct Player* p_player) {
     SDL_RenderCopyEx(renderer, head_text, NULL, &head_rect, rotation, NULL, 0);
 }
 
-void playerRenderScore(
-    struct Player* p_player, 
-    char* message, int x, int y,
-    int* width, int* height
-) {
+void renderPlayersScore(struct Player* players, size_t players_size) {
+    int y = 0;
+
+    char message[] = "Player 1: 000";
     size_t len = strlen(message);
+    
+    for (size_t i = 0; i < players_size; i++) {
+        message[7] = (i + 1) + '0';
 
-    sprintf(message+len-3, "%3d", p_player->score);
-    SDL_Color score_color = {0x56, 0x73, 0x45, 255};
-    SDL_Surface* score_surf = TTF_RenderText_Solid(font, message, score_color);
-    SDL_Texture* score_text = SDL_CreateTextureFromSurface(renderer, score_surf);
+        sprintf(message+len-3, "%3d", players[i].score);
+        SDL_Color score_color = {0x56, 0x73, 0x45, 255};
+        SDL_Surface* score_surf = TTF_RenderText_Solid(font, message, score_color);
+        SDL_Texture* score_text = SDL_CreateTextureFromSurface(renderer, score_surf);
 
-    SDL_FreeSurface(score_surf);
+        SDL_FreeSurface(score_surf);
 
-    SDL_Rect score_rect;
-    TTF_SizeText(font, message, &score_rect.w, &score_rect.h);
-    score_rect.x = x;
-    score_rect.y = y;
-    SDL_RenderCopy(renderer, score_text, NULL, &score_rect);
+        SDL_Rect score_rect;
+        TTF_SizeText(font, message, &score_rect.w, &score_rect.h);
+        score_rect.x = 0;
+        score_rect.y = y;
+        SDL_RenderCopy(renderer, score_text, NULL, &score_rect);
 
-    SDL_DestroyTexture(score_text);
+        SDL_DestroyTexture(score_text);
 
-    if (width) {
-        *width = score_rect.w;
-    }
-    if (height) {
-        *height = score_rect.h;
+        y = score_rect.h;
     }
 }
 
@@ -356,27 +361,37 @@ int main() {
     struct Game game;
     gameInit(&game);
 
-    struct Player p1;
-    playerInit(&p1);
+    struct Player players[PLAYERS_SIZE];
+    for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+        playerInit(&players[i]);
+    }
     
-    p1.bindings[LEFT] = SDLK_LEFT;
-    p1.bindings[RIGHT] = SDLK_RIGHT;
-    p1.bindings[UP] = SDLK_UP;
-    p1.bindings[DOWN] = SDLK_DOWN;
+    players[0].bindings[LEFT] = SDLK_LEFT;
+    players[0].bindings[RIGHT] = SDLK_RIGHT;
+    players[0].bindings[UP] = SDLK_UP;
+    players[0].bindings[DOWN] = SDLK_DOWN;
 
-    struct Player p2;
-    playerInit(&p2);
+    players[1].bindings[LEFT] = SDLK_a;
+    players[1].bindings[RIGHT] = SDLK_d;
+    players[1].bindings[UP] = SDLK_w;
+    players[1].bindings[DOWN] = SDLK_s;
 
-    p2.bindings[LEFT] = SDLK_a;
-    p2.bindings[RIGHT] = SDLK_d;
-    p2.bindings[UP] = SDLK_w;
-    p2.bindings[DOWN] = SDLK_s;
+    players[1].pos.x = GRID_SIZE-1;
+    players[1].pos.y = GRID_SIZE-1;
+    players[1].direc = LEFT;
 
-    p2.pos.x = GRID_SIZE-1;
-    p2.pos.y = GRID_SIZE-1;
-    p2.direc = LEFT;
+    while (true) {
+        bool quit = false;
+        for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+            if (players[i].game_over) {
+                quit = true;
+            }
+        }
 
-    while (!p1.game_over && !p2.game_over) {
+        if (quit) {
+            break;
+        }
+
         uint32_t curr_time = SDL_GetTicks();
 
         // ==========
@@ -389,14 +404,16 @@ int main() {
                     goto cleanup_media;
                 break;
                 case SDL_KEYDOWN:
-                    playerOnInput(&p1, event.key.keysym.sym);
-                    playerOnInput(&p2, event.key.keysym.sym);
+                    for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+                        playerOnInput(&players[i], event.key.keysym.sym);
+                    }
                 break;
             }
         }
 
-        playerCheckMoveCollide(&p1, curr_time, game.apples, game.apples_size);
-        playerCheckMoveCollide(&p2, curr_time, game.apples, game.apples_size);
+        for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+            playerCheckMoveCollide(&players[i], players, PLAYERS_SIZE, curr_time, game.apples, game.apples_size);
+        }
 
         // =============
         // Render
@@ -411,8 +428,9 @@ int main() {
         SDL_RenderFillRect(renderer, &grid_rect);
 
         // Body
-        playerRenderBody(&p1);
-        playerRenderBody(&p2);
+        for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+            playerRenderBody(&players[i]);
+        }
 
         // Apple
         SDL_SetRenderDrawColor(renderer, 0xFF, 0, 0, 255);
@@ -422,23 +440,20 @@ int main() {
         }
 
         // Snake Head
-        playerRenderHead(&p1);
-        playerRenderHead(&p2);
-
-        // Score
-        if (p1.score > 999 || p2.score > 999) {
-            fprintf(stderr, "Score muito grande!\n");
-            goto cleanup_media;
+        for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+            playerRenderHead(&players[i]);
         }
 
-        char message[14] = "Player 1: 000";
+        // Score
+       
+        for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+            if (players[i].score > 999) {
+                fprintf(stderr, "Score too big!\n");
+                goto cleanup_media;
+            }
+        }
 
-        int y;
-        playerRenderScore(&p1, message, 0, 0, NULL, &y);
-
-        message[7] = '2';
-
-        playerRenderScore(&p2, message, 0, y, NULL, NULL);
+        renderPlayersScore(players, PLAYERS_SIZE);
 
         // Render to screen
         SDL_RenderPresent(renderer);
