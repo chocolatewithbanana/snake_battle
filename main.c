@@ -120,15 +120,6 @@ bool loadMedia() {
     return true;
 }
 
-SDL_Rect posToRect(struct Pos* p_pos) {
-    SDL_Rect rect;
-    rect.x = GRID_X0 + p_pos->x * GRID_DIMENS / GRID_SIZE;
-    rect.y = GRID_Y0 + p_pos->y * GRID_DIMENS / GRID_SIZE;
-    rect.w = GRID_DIMENS / GRID_SIZE;
-    rect.h = GRID_DIMENS / GRID_SIZE;
-
-    return rect;
-}
 
 struct Apple {
     struct Pos pos;
@@ -312,6 +303,16 @@ void playersUpdate(
     }
 }
 
+SDL_Rect posToRect(struct Pos* p_pos) {
+    SDL_Rect rect;
+    rect.x = GRID_X0 + p_pos->x * GRID_DIMENS / GRID_SIZE;
+    rect.y = GRID_Y0 + p_pos->y * GRID_DIMENS / GRID_SIZE;
+    rect.w = GRID_DIMENS / GRID_SIZE;
+    rect.h = GRID_DIMENS / GRID_SIZE;
+
+    return rect;
+}
+
 void playerRenderBody(struct Player* p_player) {
     for (size_t i = 0; i < p_player->body_size; i++) {
         SDL_Rect body_rect = posToRect(&p_player->body[i]);
@@ -378,7 +379,7 @@ enum Mode {
     GAME_OVER
 };
 
-void resetGame(struct Game* p_game, struct Player* players, size_t players_size) {
+void reset(struct Game* p_game, struct Player* players, size_t players_size) {
     gameInit(p_game);
     for (size_t i = 0; i < players_size; i++) {
         playerInit(&players[i]);
@@ -415,17 +416,15 @@ int main() {
     struct Game game;
     struct Player players[PLAYERS_SIZE];
 
-    resetGame(&game, players, PLAYERS_SIZE);
+    reset(&game, players, PLAYERS_SIZE);
 
     uint32_t game_over_delay = 1000;
     uint32_t game_over_start;
 
     bool already_running = false;
 
-    uint32_t curr_time;
-
     while (true) {
-        curr_time = SDL_GetTicks();
+        uint32_t curr_time = SDL_GetTicks();
         switch (mode) {
             case MENU: {
                 enum Button {
@@ -600,7 +599,7 @@ int main() {
 
                 if (curr_time - game_over_start > game_over_delay) {
                     mode = MENU;
-                    resetGame(&game, players, PLAYERS_SIZE);
+                    reset(&game, players, PLAYERS_SIZE);
                 }
 
                 SDL_Color font_color = {0xFF, 0x00, 0, 255};
