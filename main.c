@@ -266,13 +266,13 @@ void playersUpdate(
     // check
     for (size_t i = 0; i < players_size; i++) {
         // check apples
-        for (size_t i = 0; i < apples_size; i++) {
-            if (players[i].pos.x == apples[i].pos.x
-                    && players[i].pos.y == apples[i].pos.y) {
+        for (size_t j = 0; j < apples_size; j++) {
+            if (players[i].pos.x == apples[j].pos.x
+                    && players[i].pos.y == apples[j].pos.y) {
                 players[i].score++;
                 players[i].body_size++;
 
-                appleInit(&apples[i]);
+                appleInit(&apples[j]);
             }
         }
 
@@ -283,11 +283,9 @@ void playersUpdate(
             for (size_t j = 0; j < players_size; j++) {
                 struct Player* p_other = &players[j];
 
-                if (p_this == p_other) {
-                    continue;
-                }
-
-                if (p_this->pos.x == p_other->pos.x && p_this->pos.y == p_other->pos.y) {
+                if (p_this != p_other 
+                        && p_this->pos.x == p_other->pos.x 
+                        && p_this->pos.y == p_other->pos.y) {
                     p_this->game_over = true;
                 }
 
