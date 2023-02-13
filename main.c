@@ -209,6 +209,8 @@ void playersUpdate(
     struct Apple* apples, size_t apples_size
 ) {
     // move
+    // @todo move out macro
+    struct Pos last_tail_pos[PLAYERS_SIZE];
     for (size_t i = 0; i < players_size; i++) {
         struct Player* p_player = &players[i];
 
@@ -217,6 +219,11 @@ void playersUpdate(
             p_player->reset_buffer_on_input = true;
 
             struct Pos last_pos = p_player->pos;
+            if (p_player->body_size > 0) {
+                last_tail_pos[i] = p_player->body[p_player->body_size-1];
+            } else {
+                last_tail_pos[i] = last_pos;
+            }
 
             // move head
             if (p_player->direc_i < p_player->direc_size) {
@@ -263,39 +270,42 @@ void playersUpdate(
         }
     }
 
-    // check
+    // check apples
     for (size_t i = 0; i < players_size; i++) {
-        // check apples
-        for (size_t j = 0; j < apples_size; j++) {
-            if (players[i].pos.x == apples[j].pos.x
-                    && players[i].pos.y == apples[j].pos.y) {
-                players[i].score++;
-                players[i].body_size++;
+        struct Player* p_player = &players[i];
 
+        for (size_t j = 0; j < apples_size; j++) {
+            if (p_player->pos.x == apples[j].pos.x
+                    && p_player->pos.y == apples[j].pos.y) {
+                p_player->score++;
+                
                 appleInit(&apples[j]);
+
+                p_player->body_size++; 
+                p_player->body[p_player->body_size-1] = last_tail_pos[i];
             }
         }
+    }
 
-        // check colision
-        for (size_t i = 0; i < players_size; i++) {
-            struct Player* p_this = &players[i];
+    // check colision
+    for (size_t i = 0; i < players_size; i++) {
+        struct Player* p_this = &players[i];
 
-            for (size_t j = 0; j < players_size; j++) {
-                struct Player* p_other = &players[j];
+        for (size_t j = 0; j < players_size; j++) {
+            struct Player* p_other = &players[j];
 
-                if (p_this != p_other 
-                        && p_this->pos.x == p_other->pos.x 
-                        && p_this->pos.y == p_other->pos.y) {
+            if (p_this != p_other 
+                    && p_this->pos.x == p_other->pos.x 
+                    && p_this->pos.y == p_other->pos.y) {
+                p_this->game_over = true;
+            }
+
+            for (size_t k = 0; k < p_other->body_size; k++) {
+                struct Pos* p_body = &p_other->body[k];
+                
+                if (p_this->pos.x == p_body->x && p_this->pos.y == p_body->y) {
                     p_this->game_over = true;
-                }
-
-                for (size_t k = 0; k < p_other->body_size; k++) {
-                    struct Pos* p_body = &p_other->body[k];
-                    
-                    if (p_this->pos.x == p_body->x && p_this->pos.y == p_body->y) {
-                        p_this->game_over = true;
-                    }    
-                }
+                }    
             }
         }
     }
