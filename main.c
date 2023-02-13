@@ -212,77 +212,100 @@ void playerOnInput(struct Player* p_player, SDL_Keycode key) {
     }
 }
 
-void playerCheckMoveCollide(
-    struct Player* p_player, 
+void playersUpdate(
     struct Player* players, size_t players_size,
     uint32_t curr_time,
     struct Apple* apples, size_t apples_size
 ) {
-    if (curr_time - p_player->last_movem_frame > p_player->movem_delay) {
-        p_player->last_movem_frame = curr_time;
-        p_player->reset_buffer_on_input = true;
+    // move
+    for (size_t i = 0; i < players_size; i++) {
+        struct Player* p_player = &players[i];
 
-        struct Pos last_pos = p_player->pos;
+        if (curr_time - p_player->last_movem_frame > p_player->movem_delay) {
+            p_player->last_movem_frame = curr_time;
+            p_player->reset_buffer_on_input = true;
 
-        // move head
-        if (p_player->direc_i < p_player->direc_size) {
-            p_player->direc = p_player->direc_buff[p_player->direc_i++];
+            struct Pos last_pos = p_player->pos;
+
+            // move head
+            if (p_player->direc_i < p_player->direc_size) {
+                p_player->direc = p_player->direc_buff[p_player->direc_i++];
+            }
+
+            switch (p_player->direc) {
+                case UP:
+                    p_player->pos.y--;
+                break;
+                case DOWN:
+                    p_player->pos.y++;
+                break;
+                case LEFT:
+                    p_player->pos.x--;
+                break;
+                case RIGHT:
+                    p_player->pos.x++;
+                break;
+                case NONE:
+                    assert(false);
+                break;
+            }
+
+            if (p_player->pos.x < 0) {
+                p_player->pos.x = GRID_SIZE-1;
+            } else if (p_player->pos.x >= GRID_SIZE) {
+                p_player->pos.x = 0;
+            }
+
+            if (p_player->pos.y < 0) {
+                p_player->pos.y = GRID_SIZE-1;
+            } else if (p_player->pos.y >= GRID_SIZE) {
+                p_player->pos.y = 0;
+            }
+
+            // move body
+            if (p_player->body_size > 0) {
+                for (size_t i = p_player->body_size-1; i > 0; i--) {
+                    p_player->body[i] = p_player->body[i-1]; 
+                }
+                p_player->body[0] = last_pos;
+            }
         }
+    }
 
-        switch (p_player->direc) {
-            case UP:
-                p_player->pos.y--;
-            break;
-            case DOWN:
-                p_player->pos.y++;
-            break;
-            case LEFT:
-                p_player->pos.x--;
-            break;
-            case RIGHT:
-                p_player->pos.x++;
-            break;
-            case NONE:
-                assert(false);
-            break;
-        }
-
-        if (p_player->pos.x < 0) {
-            p_player->pos.x = GRID_SIZE-1;
-        } else if (p_player->pos.x >= GRID_SIZE) {
-            p_player->pos.x = 0;
-        }
-
-        if (p_player->pos.y < 0) {
-            p_player->pos.y = GRID_SIZE-1;
-        } else if (p_player->pos.y >= GRID_SIZE) {
-            p_player->pos.y = 0;
-        }
-
+    // check
+    for (size_t i = 0; i < players_size; i++) {
         // check apples
         for (size_t i = 0; i < apples_size; i++) {
-            if (p_player->pos.x == apples[i].pos.x
-                    && p_player->pos.y == apples[i].pos.y) {
-                p_player->score++;
-                p_player->body_size++;
+            if (players[i].pos.x == apples[i].pos.x
+                    && players[i].pos.y == apples[i].pos.y) {
+                players[i].score++;
+                players[i].body_size++;
 
                 appleInit(&apples[i]);
             }
         }
 
-        // move body
-        if (p_player->body_size > 0) {
-            for (size_t i = p_player->body_size-1; i > 0; i--) {
-                p_player->body[i] = p_player->body[i-1]; 
-            }
-            p_player->body[0] = last_pos;
-        }
-
         // check colision
         for (size_t i = 0; i < players_size; i++) {
-            for (size_t j = 0; j < players[i].body_size; j++) {
-                if (players[i].body[j].x == p_player->pos.x && players[i].body[j].y == p_player->pos.y) {
-                    p_player->game_over = true;
+            struct Player* p_this = &players[i];
+
+            for (size_t j = 0; j < players_size; j++) {
+                struct Player* p_other = &players[j];
+
+                if (p_this == p_other) {
+                    continue;
+                }
+
+                if (p_this->pos.x == p_other->pos.x && p_this->pos.y == p_other->pos.y) {
+                    p_this->game_over = true;
+                }
+
+                for (size_t k = 0; k < p_other->body_size; k++) {
+                    struct Pos* p_body = &p_other->body[k];
+                    
+                    if (p_this->pos.x == p_body->x && p_this->pos.y == p_body->y) {
+                        p_this->game_over = true;
+                    }    
                 }
             }
         }
@@ -521,9 +544,10 @@ int main() {
                     }
                 }
 
-                for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                    playerCheckMoveCollide(&players[i], players, PLAYERS_SIZE, curr_time, game.apples, game.apples_size);
-                }
+                // =============
+                // Update
+                // =============
+                playersUpdate(players, PLAYERS_SIZE, curr_time, game.apples, game.apples_size);
 
                 // =============
                 // Render
@@ -555,7 +579,6 @@ int main() {
                 }
 
                 // Score
-               
                 for (size_t i = 0; i < PLAYERS_SIZE; i++) {
                     if (players[i].score > 999) {
                         fprintf(stderr, "Score too big!\n");
