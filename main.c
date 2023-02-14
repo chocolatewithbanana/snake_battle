@@ -18,6 +18,7 @@
 #define BODY_SIZE (GRID_SIZE*GRID_SIZE)
 
 #define PLAYERS_SIZE 2
+#define MAX_PLAYERS_SIZE 4
 
 #define DIREC_BUFFER_SIZE 2
 #define APPLES_SIZE 100
@@ -43,11 +44,10 @@ struct Pos {
 };
 
 enum Direction {
-    UP = 0,
     DOWN,
     LEFT,
     RIGHT,
-    NONE
+    UP
 };
 
 void printSdlError(char* message) {
@@ -183,15 +183,17 @@ void playerInit(struct Player* p_player) {
 }
 
 void playerOnInput(struct Player* p_player, SDL_Keycode key) {
-    enum Direction direc = NONE;
+    enum Direction direc;
+    bool moved = false;
 
     for (size_t i = 0; i < 4; i++) {
         if (p_player->bindings[i] == key) {
             direc = (enum Direction)i;
+            moved = true;
         }
     } 
 
-    if (direc != NONE) {
+    if (moved) {
         if (p_player->reset_buffer_on_input) {
             p_player->reset_buffer_on_input = false;
             p_player->direc_size = 0;
@@ -231,9 +233,6 @@ void playersUpdate(
             }
 
             switch (p_player->direc) {
-            case UP:
-                p_player->pos.y--;
-            break;
             case DOWN:
                 p_player->pos.y++;
             break;
@@ -243,8 +242,8 @@ void playersUpdate(
             case RIGHT:
                 p_player->pos.x++;
             break;
-            case NONE:
-                assert(false);
+            case UP:
+                p_player->pos.y--;
             break;
             }
 
@@ -333,20 +332,17 @@ void playerRenderHead(struct Player* p_player) {
 
     double rotation;
     switch (p_player->direc) {
-    case UP:
-        rotation = 0;
+    case DOWN:
+        rotation = 180;
     break;
     case RIGHT:
         rotation = 90;
     break;
-    case DOWN:
-        rotation = 180;
-    break;
     case LEFT:
         rotation = 270;
     break;
-    case NONE:
-        assert(false);
+    case UP:
+        rotation = 0;
     break;
     }
     
@@ -400,8 +396,8 @@ void reset(struct Game* p_game, struct Player* players, size_t players_size) {
     players[1].direc = LEFT;
 }
 
-void renderButton(char* msg, SDL_Rect* hitbox) {
-    SDL_Color font_color = {0xFF, 0x00, 0x00, 0xFF};
+void renderButton(char* msg, SDL_Rect* hitbox, SDL_Color color) {
+    SDL_Color font_color = color;
 
     SDL_Surface* surf = TTF_RenderText_Solid(font, msg, font_color);
     SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surf);
@@ -412,7 +408,7 @@ void renderButton(char* msg, SDL_Rect* hitbox) {
     SDL_DestroyTexture(texture);
 }
 
-void renderButtonsCentered(char** texts, size_t button_qty, SDL_Rect* hitbox) {
+void renderButtonsCentered(char** texts, size_t button_qty, SDL_Rect* hitbox, SDL_Color* colors) {
     int total_height = 0;
 
     for (size_t i = 0; i < button_qty; i++) {
@@ -431,7 +427,7 @@ void renderButtonsCentered(char** texts, size_t button_qty, SDL_Rect* hitbox) {
         button_rect.x = WINDOW_WIDTH/2 - button_rect.w/2;
         button_rect.y = y;
 
-        renderButton(texts[i], &button_rect);
+        renderButton(texts[i], &button_rect, colors[i]);
 
         y += button_rect.h; 
         hitbox[i] = button_rect;
@@ -463,23 +459,27 @@ int main() {
 
     reset(&game, players, PLAYERS_SIZE);
 
-    players[0].bindings[LEFT] = SDLK_a;
-    players[0].bindings[RIGHT] = SDLK_d;
-    players[0].bindings[UP] = SDLK_w;
-    players[0].bindings[DOWN] = SDLK_s;
+    SDL_Keycode bindings[MAX_PLAYERS_SIZE][4] = {
+        {SDLK_s, SDLK_a, SDLK_d, SDLK_w},
+        {SDLK_DOWN, SDLK_LEFT, SDLK_RIGHT, SDLK_UP},
+        {SDLK_g, SDLK_f, SDLK_h, SDLK_t},
+        {SDLK_k, SDLK_j, SDLK_l, SDLK_i}
+    };
 
-    players[1].bindings[LEFT] = SDLK_LEFT;
-    players[1].bindings[RIGHT] = SDLK_RIGHT;
-    players[1].bindings[UP] = SDLK_UP;
-    players[1].bindings[DOWN] = SDLK_DOWN;
+    for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+        memcpy(&players[i].bindings, bindings[i], sizeof(SDL_Keycode)*4);
+    }
 
     uint32_t game_over_delay = 1000;
     uint32_t game_over_start;
 
     bool already_running = false;
 
-    bool selected = false;
-    size_t selected_i; 
+    SDL_Color button_released_color = {0xFF, 0x00, 0x00, 0xFF};
+    SDL_Color button_pressed_color = {0x00, 0xFF, 0x00, 0xFF};
+
+    bool remap_button_sel = false;
+    size_t remap_button_sel_i; 
 
     size_t sel_player_i = 0;
 
@@ -487,6 +487,9 @@ int main() {
         uint32_t curr_time = SDL_GetTicks();
         switch (mode) {
         case MENU: {
+
+#define MENU_BUTTONS_SIZE 3
+
             // clean screen
             SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
             SDL_RenderClear(renderer);
@@ -498,14 +501,20 @@ int main() {
                 QUIT
             };
 
-            char* msg[3] = {"Start", "Options", "Quit"};
+            char* msg[MENU_BUTTONS_SIZE] = {"Start", "Options", "Quit"};
 
             if (already_running) {
                 msg[0] = "Continue";
             }
 
-            SDL_Rect hitbox[3];
-            renderButtonsCentered(msg, 3, hitbox);
+            SDL_Color colors[MENU_BUTTONS_SIZE] = {
+                button_released_color,
+                button_released_color,   
+                button_released_color   
+            };
+
+            SDL_Rect hitbox[MENU_BUTTONS_SIZE];
+            renderButtonsCentered(msg, MENU_BUTTONS_SIZE, hitbox, colors);
 
             // events
             SDL_Event event;
@@ -522,7 +531,7 @@ int main() {
                     }
                 } break;
                 case SDL_MOUSEBUTTONDOWN: {
-                    for (size_t i = 0; i < 3; i++) {
+                    for (size_t i = 0; i < MENU_BUTTONS_SIZE; i++) {
                         struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
                         if (rectContainsPos(&hitbox[i], &mouse_pos)) {
                             switch ((enum Button)i) {
@@ -560,22 +569,30 @@ int main() {
                 sel_player_hitbox.y = 0;
                 TTF_SizeText(font, msg, &sel_player_hitbox.w, &sel_player_hitbox.h);
 
-                renderButton(msg, &sel_player_hitbox);
+                renderButton(msg, &sel_player_hitbox, button_released_color);
             }
 
             // ===================
             // Centered buttons
             // ===================
-            SDL_Rect hitbox[4];
-            {
-                char msg[4][9];
-                // It has to be in this order
-                strcpy(msg[0], "UP: 0");
-                strcpy(msg[1], "DOWN: 0");
-                strcpy(msg[2], "LEFT: 0");
-                strcpy(msg[3], "RIGHT: 0");
+#define OPTIONS_MENU_BUTTONS_SIZE 4
 
-                for (size_t i = 0; i < 4; i++) {
+            SDL_Rect hitbox[OPTIONS_MENU_BUTTONS_SIZE];
+            {
+                char msg[OPTIONS_MENU_BUTTONS_SIZE][9];
+                // It has to be in this order
+                char* pre_msg[OPTIONS_MENU_BUTTONS_SIZE] = {
+                    "DOWN: 0",
+                    "LEFT: 0",
+                    "RIGHT: 0",
+                    "UP: 0"
+                };
+
+                for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
+                    strcpy(msg[i], pre_msg[i]);
+                }
+
+                for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
                     size_t len = strlen(msg[i]);
 
                     SDL_Keycode key = players[sel_player_i].bindings[i];
@@ -584,6 +601,9 @@ int main() {
                         msg[i][len-1] = (char)key;
                     } else {
                         switch (key) {
+                        case SDLK_DOWN: {
+                            msg[i][len-1] = 'v';
+                        } break;
                         case SDLK_LEFT: {
                             msg[i][len-1] = '<';
                         } break;
@@ -593,16 +613,25 @@ int main() {
                         case SDLK_UP: {
                             msg[i][len-1] = '^';
                         } break;
-                        case SDLK_DOWN: {
-                            msg[i][len-1] = 'v';
-                        } break;
                         }
                     }
                 }
 
-                char* p_msg[4] = {msg[0], msg[1], msg[2], msg[3]};
+                char* p_msg[OPTIONS_MENU_BUTTONS_SIZE];
+                for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
+                    p_msg[i] = msg[i]; 
+                }
 
-                renderButtonsCentered(p_msg, 4, hitbox);
+                SDL_Color colors[OPTIONS_MENU_BUTTONS_SIZE] = {
+                    button_released_color,
+                    button_released_color,
+                    button_released_color,
+                    button_released_color
+                };
+
+                if (remap_button_sel) colors[remap_button_sel_i] = button_pressed_color;
+
+                renderButtonsCentered(p_msg, OPTIONS_MENU_BUTTONS_SIZE, hitbox, colors);
             }
 
             SDL_Event event;
@@ -615,25 +644,23 @@ int main() {
                     if (event.key.keysym.sym == SDLK_ESCAPE) {
                         mode = MENU;
                     }
-                    if (selected) {
-                        selected = false;
-                        players[sel_player_i].bindings[selected_i] = event.key.keysym.sym;
+                    if (remap_button_sel) {
+                        remap_button_sel = false;
+                        players[sel_player_i].bindings[remap_button_sel_i] = event.key.keysym.sym;
                     }
                 } break;
                 case SDL_MOUSEBUTTONDOWN: {
                     struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
                     bool pressed_button = false;
-                    for (size_t i = 0; i < 4; i++) {
-                        if (!selected) {
-                            if (rectContainsPos(&hitbox[i], &mouse_pos)) {
-                                pressed_button = true;
-                                selected = true;
-                                selected_i = i;
-                            }
+                    for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
+                        if (!remap_button_sel && rectContainsPos(&hitbox[i], &mouse_pos)) {
+                            pressed_button = true;
+                            remap_button_sel = true;
+                            remap_button_sel_i = i;
                         } 
                     }
                     if (!pressed_button) {
-                        selected = false;
+                        remap_button_sel = false;
                     }
 
                     if (rectContainsPos(&sel_player_hitbox, &mouse_pos)) {
