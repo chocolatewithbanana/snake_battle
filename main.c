@@ -400,7 +400,7 @@ void reset(struct Game* p_game, struct Player* players, size_t players_size) {
     players[1].direc = LEFT;
 }
 
-void renderButtons(char** texts, size_t button_qty, SDL_Rect* hitbox) {
+void renderButtonsCentered(char** texts, size_t button_qty, SDL_Rect* hitbox) {
     int total_height = 0;
 
     for (size_t i = 0; i < button_qty; i++) {
@@ -476,6 +476,8 @@ int main() {
     bool selected = false;
     size_t selected_i; 
 
+    size_t player_msg_i = 0;
+
     while (true) {
         uint32_t curr_time = SDL_GetTicks();
         switch (mode) {
@@ -498,7 +500,7 @@ int main() {
 
             SDL_Rect hitbox[3];
 
-            renderButtons(texts, 3, hitbox);
+            renderButtonsCentered(texts, 3, hitbox);
 
             // events
             SDL_Event event;
@@ -537,9 +539,35 @@ int main() {
             }
         } break;
         case OPTIONS_MENU: {
-            // It has to be in this order
-            char messages[4][9];
+            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
+            SDL_RenderClear(renderer);
 
+            // ===================
+            // Lateral buttons
+            // ===================
+            char msg[9] = "Player 0";
+
+            msg[7] = player_msg_i + 1 + '0';
+
+            SDL_Rect player_msg_hitbox = {.x = 0, .y = 0};
+
+            TTF_SizeText(font, msg, &player_msg_hitbox.w, &player_msg_hitbox.h);
+
+            SDL_Color color = {0xFF, 0, 0, 0};
+
+            SDL_Surface* button_surf = TTF_RenderText_Solid(font, msg, color);
+            SDL_Texture* button_text = SDL_CreateTextureFromSurface(renderer, button_surf);
+            SDL_FreeSurface(button_surf);
+
+            SDL_RenderCopy(renderer, button_text, NULL, &player_msg_hitbox);
+
+            SDL_DestroyTexture(button_text);
+
+            // ===================
+            // Centered buttons
+            // ===================
+            char messages[4][9];
+            // It has to be in this order
             strcpy(messages[0], "UP: 0");
             strcpy(messages[1], "DOWN: 0");
             strcpy(messages[2], "LEFT: 0");
@@ -548,16 +576,34 @@ int main() {
             for (size_t i = 0; i < 4; i++) {
                 size_t len = strlen(messages[i]);
 
-                messages[i][len-1] = (char)players[0].bindings[i];
+                SDL_Keycode key = players[player_msg_i].bindings[i];
+
+                
+                if (key <= 0x7F) {
+                    messages[i][len-1] = (char)key;
+                } else {
+                    switch (key) {
+                    case SDLK_LEFT: {
+                        messages[i][len-1] = '<';
+                    } break;
+                    case SDLK_RIGHT: {
+                        messages[i][len-1] = '>';
+                    } break;
+                    case SDLK_UP: {
+                        messages[i][len-1] = '^';
+                    } break;
+                    case SDLK_DOWN: {
+                        messages[i][len-1] = 'v';
+                    } break;
+                    }
+                }
             }
 
-            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
-            SDL_RenderClear(renderer);
 
             char* p_messages[4] = {messages[0], messages[1], messages[2], messages[3]};
 
             SDL_Rect hitbox[4];
-            renderButtons(p_messages, 4, hitbox);
+            renderButtonsCentered(p_messages, 4, hitbox);
 
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -571,7 +617,7 @@ int main() {
                     }
                     if (selected) {
                         selected = false;
-                        players[0].bindings[selected_i] = event.key.keysym.sym;
+                        players[player_msg_i].bindings[selected_i] = event.key.keysym.sym;
                     }
                 } break;
                 case SDL_MOUSEBUTTONDOWN: {
@@ -580,6 +626,12 @@ int main() {
                         if (rectContainsPos(&hitbox[i], &mouse_pos)) {
                             selected = true;
                             selected_i = i;
+                        }
+                    }
+                    if (rectContainsPos(&player_msg_hitbox, &mouse_pos)) {
+                        player_msg_i++;
+                        if (player_msg_i >= PLAYERS_SIZE) {
+                            player_msg_i = 0;
                         }
                     }
                 } break;
