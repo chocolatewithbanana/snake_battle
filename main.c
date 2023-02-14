@@ -17,7 +17,7 @@
 #define GRID_SIZE 20
 #define BODY_SIZE (GRID_SIZE*GRID_SIZE)
 
-#define PLAYERS_SIZE 2
+#define PLAYERS_SIZE 4
 #define MAX_PLAYERS_SIZE 4
 
 #define DIREC_BUFFER_SIZE 2
@@ -120,7 +120,6 @@ bool loadMedia() {
     return true;
 }
 
-
 struct Apple {
     struct Pos pos;
 };
@@ -214,6 +213,8 @@ void playersUpdate(
     // @todo move out macro
     struct Pos last_tail_pos[PLAYERS_SIZE];
     for (size_t i = 0; i < players_size; i++) {
+        if (players[i].game_over) continue;
+
         struct Player* p_player = &players[i];
 
         if (curr_time - p_player->last_movem_frame > p_player->movem_delay) {
@@ -273,6 +274,8 @@ void playersUpdate(
     for (size_t i = 0; i < players_size; i++) {
         struct Player* p_player = &players[i];
 
+        if (p_player->game_over) continue;
+
         for (size_t j = 0; j < apples_size; j++) {
             if (p_player->pos.x == apples[j].pos.x
                     && p_player->pos.y == apples[j].pos.y) {
@@ -290,8 +293,12 @@ void playersUpdate(
     for (size_t i = 0; i < players_size; i++) {
         struct Player* p_this = &players[i];
 
+        if (p_this->game_over) continue;
+
         for (size_t j = 0; j < players_size; j++) {
             struct Player* p_other = &players[j];
+
+            if (p_other->game_over) continue;
 
             if (p_this != p_other 
                     && p_this->pos.x == p_other->pos.x 
@@ -307,6 +314,44 @@ void playersUpdate(
                 }    
             }
         }
+    }
+}
+
+void renderMsg(char* msg, SDL_Rect* hitbox, SDL_Color color) {
+    SDL_Color font_color = color;
+
+    SDL_Surface* surf = TTF_RenderText_Solid(font, msg, font_color);
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surf);
+    SDL_FreeSurface(surf);
+
+    SDL_RenderCopy(renderer, texture, NULL, hitbox);
+
+    SDL_DestroyTexture(texture);
+}
+
+void renderMsgsCentered(char** texts, size_t button_qty, SDL_Rect* hitbox, SDL_Color* colors) {
+    int total_height = 0;
+
+    for (size_t i = 0; i < button_qty; i++) {
+        int h;
+        TTF_SizeText(font, texts[i], NULL, &h);
+        total_height += h;
+    }
+    
+    int y = WINDOW_HEIGHT/2 - total_height/2; 
+
+    if (y < 0) assert(false && "Too large menu buttons");
+
+    for (size_t i = 0; i < button_qty; i++) {
+        SDL_Rect button_rect;
+        TTF_SizeText(font, texts[i], &button_rect.w, &button_rect.h);
+        button_rect.x = WINDOW_WIDTH/2 - button_rect.w/2;
+        button_rect.y = y;
+
+        renderMsg(texts[i], &button_rect, colors[i]);
+
+        y += button_rect.h; 
+        hitbox[i] = button_rect;
     }
 }
 
@@ -359,21 +404,17 @@ void renderPlayersScore(struct Player* players, size_t players_size) {
         message[7] = (i + 1) + '0';
 
         sprintf(message+len-3, "%3d", players[i].score);
-        SDL_Color score_color = {0x56, 0x73, 0x45, 255};
-        SDL_Surface* score_surf = TTF_RenderText_Solid(font, message, score_color);
-        SDL_Texture* score_text = SDL_CreateTextureFromSurface(renderer, score_surf);
 
-        SDL_FreeSurface(score_surf);
+        SDL_Color score_color = {0x56, 0x73, 0x45, 255};
 
         SDL_Rect score_rect;
         TTF_SizeText(font, message, &score_rect.w, &score_rect.h);
         score_rect.x = 0;
         score_rect.y = y;
-        SDL_RenderCopy(renderer, score_text, NULL, &score_rect);
 
-        SDL_DestroyTexture(score_text);
+        renderMsg(message, &score_rect, score_color);
 
-        y = score_rect.h;
+        y += score_rect.h;
     }
 }
 
@@ -390,49 +431,26 @@ void reset(struct Game* p_game, struct Player* players, size_t players_size) {
         playerInit(&players[i]);
     }
 
+    struct Pos init_pos[MAX_PLAYERS_SIZE] = {
+        {0, 0},
+        {GRID_SIZE-1, 0},
+        {0, GRID_SIZE-1},
+        {GRID_SIZE-1, GRID_SIZE-1} 
+    };
 
-    players[1].pos.x = GRID_SIZE-1;
-    players[1].pos.y = GRID_SIZE-1;
-    players[1].direc = LEFT;
-}
+    enum Direction init_direc[MAX_PLAYERS_SIZE] = {
+        RIGHT,
+        LEFT,
+        RIGHT,
+        LEFT  
+    };
 
-void renderButton(char* msg, SDL_Rect* hitbox, SDL_Color color) {
-    SDL_Color font_color = color;
-
-    SDL_Surface* surf = TTF_RenderText_Solid(font, msg, font_color);
-    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surf);
-    SDL_FreeSurface(surf);
-
-    SDL_RenderCopy(renderer, texture, NULL, hitbox);
-
-    SDL_DestroyTexture(texture);
-}
-
-void renderButtonsCentered(char** texts, size_t button_qty, SDL_Rect* hitbox, SDL_Color* colors) {
-    int total_height = 0;
-
-    for (size_t i = 0; i < button_qty; i++) {
-        int h;
-        TTF_SizeText(font, texts[i], NULL, &h);
-        total_height += h;
-    }
-    
-    int y = WINDOW_HEIGHT/2 - total_height/2; 
-
-    if (y < 0) assert(false && "Too large menu buttons");
-
-    for (size_t i = 0; i < button_qty; i++) {
-        SDL_Rect button_rect;
-        TTF_SizeText(font, texts[i], &button_rect.w, &button_rect.h);
-        button_rect.x = WINDOW_WIDTH/2 - button_rect.w/2;
-        button_rect.y = y;
-
-        renderButton(texts[i], &button_rect, colors[i]);
-
-        y += button_rect.h; 
-        hitbox[i] = button_rect;
+    for (size_t i = 0; i < players_size; i++) {
+        players[i].pos = init_pos[i];
+        players[i].direc = init_direc[i];
     }
 }
+
 
 bool rectContainsPos(SDL_Rect* rect, struct Pos* pos) {
     return pos->x > rect->x
@@ -514,7 +532,7 @@ int main() {
             };
 
             SDL_Rect hitbox[MENU_BUTTONS_SIZE];
-            renderButtonsCentered(msg, MENU_BUTTONS_SIZE, hitbox, colors);
+            renderMsgsCentered(msg, MENU_BUTTONS_SIZE, hitbox, colors);
 
             // events
             SDL_Event event;
@@ -569,7 +587,7 @@ int main() {
                 sel_player_hitbox.y = 0;
                 TTF_SizeText(font, msg, &sel_player_hitbox.w, &sel_player_hitbox.h);
 
-                renderButton(msg, &sel_player_hitbox, button_released_color);
+                renderMsg(msg, &sel_player_hitbox, button_released_color);
             }
 
             // ===================
@@ -631,7 +649,7 @@ int main() {
 
                 if (remap_button_sel) colors[remap_button_sel_i] = button_pressed_color;
 
-                renderButtonsCentered(p_msg, OPTIONS_MENU_BUTTONS_SIZE, hitbox, colors);
+                renderMsgsCentered(p_msg, OPTIONS_MENU_BUTTONS_SIZE, hitbox, colors);
             }
 
             SDL_Event event;
@@ -674,12 +692,15 @@ int main() {
             }
         } break;
         case RUNNING: {
+            bool all_died = true;
             for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                if (players[i].game_over) {
-                    mode = GAME_OVER;
-                    game_over_start = curr_time;
-                    already_running = false;
-                }
+                if (!players[i].game_over) all_died = false;
+            }
+
+            if (all_died) {
+                mode = GAME_OVER;
+                game_over_start = curr_time;
+                already_running = false;
             }
 
             // ==========
@@ -693,7 +714,9 @@ int main() {
                 break;
                 case SDL_KEYDOWN:
                     for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                        playerOnInput(&players[i], event.key.keysym.sym);
+                        if (!players[i].game_over) {
+                            playerOnInput(&players[i], event.key.keysym.sym);
+                        }
                     }
                     if (event.key.keysym.sym == SDLK_ESCAPE) {
                         mode = MENU;
@@ -721,7 +744,9 @@ int main() {
 
             // Body
             for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                playerRenderBody(&players[i]);
+                if (!players[i].game_over) {
+                    playerRenderBody(&players[i]);
+                }
             }
 
             // Apple
@@ -733,7 +758,9 @@ int main() {
 
             // Snake Head
             for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                playerRenderHead(&players[i]);
+                if (!players[i].game_over) {
+                    playerRenderHead(&players[i]);
+                }
             }
 
             // Score
