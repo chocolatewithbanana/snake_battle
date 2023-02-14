@@ -458,15 +458,15 @@ int main() {
 
     reset(&game, players, PLAYERS_SIZE);
 
-    players[1].bindings[LEFT] = SDLK_LEFT;
-    players[1].bindings[RIGHT] = SDLK_RIGHT;
-    players[1].bindings[UP] = SDLK_UP;
-    players[1].bindings[DOWN] = SDLK_DOWN;
-
     players[0].bindings[LEFT] = SDLK_a;
     players[0].bindings[RIGHT] = SDLK_d;
     players[0].bindings[UP] = SDLK_w;
     players[0].bindings[DOWN] = SDLK_s;
+
+    players[1].bindings[LEFT] = SDLK_LEFT;
+    players[1].bindings[RIGHT] = SDLK_RIGHT;
+    players[1].bindings[UP] = SDLK_UP;
+    players[1].bindings[DOWN] = SDLK_DOWN;
 
     uint32_t game_over_delay = 1000;
     uint32_t game_over_start;
@@ -577,7 +577,6 @@ int main() {
                 size_t len = strlen(messages[i]);
 
                 SDL_Keycode key = players[player_msg_i].bindings[i];
-
                 
                 if (key <= 0x7F) {
                     messages[i][len-1] = (char)key;
@@ -622,12 +621,20 @@ int main() {
                 } break;
                 case SDL_MOUSEBUTTONDOWN: {
                     struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
+                    bool pressed_button = false;
                     for (size_t i = 0; i < 4; i++) {
-                        if (rectContainsPos(&hitbox[i], &mouse_pos)) {
-                            selected = true;
-                            selected_i = i;
-                        }
+                        if (!selected) {
+                            if (rectContainsPos(&hitbox[i], &mouse_pos)) {
+                                pressed_button = true;
+                                selected = true;
+                                selected_i = i;
+                            }
+                        } 
                     }
+                    if (!pressed_button) {
+                        selected = false;
+                    }
+
                     if (rectContainsPos(&player_msg_hitbox, &mouse_pos)) {
                         player_msg_i++;
                         if (player_msg_i >= PLAYERS_SIZE) {
