@@ -17,7 +17,6 @@
 #define GRID_SIZE 20
 #define BODY_SIZE (GRID_SIZE*GRID_SIZE)
 
-#define PLAYERS_SIZE 4
 #define MAX_PLAYERS_SIZE 4
 
 #define DIREC_BUFFER_SIZE 2
@@ -211,7 +210,7 @@ void playersUpdate(
 ) {
     // move
     // @todo move out macro
-    struct Pos last_tail_pos[PLAYERS_SIZE];
+    struct Pos last_tail_pos[MAX_PLAYERS_SIZE];
     for (size_t i = 0; i < players_size; i++) {
         if (players[i].game_over) continue;
 
@@ -297,8 +296,6 @@ void playersUpdate(
 
         for (size_t j = 0; j < players_size; j++) {
             struct Player* p_other = &players[j];
-
-            if (p_other->game_over) continue;
 
             if (p_this != p_other 
                     && p_this->pos.x == p_other->pos.x 
@@ -473,9 +470,10 @@ int main() {
     enum Mode mode = MENU;
 
     struct Game game;
-    struct Player players[PLAYERS_SIZE];
+    struct Player players[MAX_PLAYERS_SIZE];
+    size_t players_size = 2;
 
-    reset(&game, players, PLAYERS_SIZE);
+    reset(&game, players, MAX_PLAYERS_SIZE);
 
     SDL_Keycode bindings[MAX_PLAYERS_SIZE][4] = {
         {SDLK_s, SDLK_a, SDLK_d, SDLK_w},
@@ -484,7 +482,7 @@ int main() {
         {SDLK_k, SDLK_j, SDLK_l, SDLK_i}
     };
 
-    for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+    for (size_t i = 0; i < MAX_PLAYERS_SIZE; i++) {
         memcpy(&players[i].bindings, bindings[i], sizeof(SDL_Keycode)*4);
     }
 
@@ -683,7 +681,7 @@ int main() {
 
                     if (rectContainsPos(&sel_player_hitbox, &mouse_pos)) {
                         sel_player_i++;
-                        if (sel_player_i >= PLAYERS_SIZE) {
+                        if (sel_player_i >= players_size) {
                             sel_player_i = 0;
                         }
                     }
@@ -693,7 +691,7 @@ int main() {
         } break;
         case RUNNING: {
             bool all_died = true;
-            for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+            for (size_t i = 0; i < players_size; i++) {
                 if (!players[i].game_over) all_died = false;
             }
 
@@ -713,7 +711,7 @@ int main() {
                     goto cleanup_media;
                 break;
                 case SDL_KEYDOWN:
-                    for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+                    for (size_t i = 0; i < players_size; i++) {
                         if (!players[i].game_over) {
                             playerOnInput(&players[i], event.key.keysym.sym);
                         }
@@ -728,7 +726,7 @@ int main() {
             // =============
             // Update
             // =============
-            playersUpdate(players, PLAYERS_SIZE, curr_time, game.apples, game.apples_size);
+            playersUpdate(players, players_size, curr_time, game.apples, game.apples_size);
 
             // =============
             // Render
@@ -743,10 +741,8 @@ int main() {
             SDL_RenderFillRect(renderer, &grid_rect);
 
             // Body
-            for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                if (!players[i].game_over) {
-                    playerRenderBody(&players[i]);
-                }
+            for (size_t i = 0; i < players_size; i++) {
+                playerRenderBody(&players[i]);
             }
 
             // Apple
@@ -757,21 +753,19 @@ int main() {
             }
 
             // Snake Head
-            for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                if (!players[i].game_over) {
-                    playerRenderHead(&players[i]);
-                }
+            for (size_t i = 0; i < players_size; i++) {
+                playerRenderHead(&players[i]);
             }
 
             // Score
-            for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+            for (size_t i = 0; i < players_size; i++) {
                 if (players[i].score > 999) {
                     fprintf(stderr, "Score too big!\n");
                     goto cleanup_media;
                 }
             }
 
-            renderPlayersScore(players, PLAYERS_SIZE);
+            renderPlayersScore(players, players_size);
         } break;
         case GAME_OVER: {
             SDL_Event event;
@@ -785,7 +779,7 @@ int main() {
 
             if (curr_time - game_over_start > game_over_delay) {
                 mode = MENU;
-                reset(&game, players, PLAYERS_SIZE);
+                reset(&game, players, MAX_PLAYERS_SIZE);
             }
 
             SDL_Color font_color = {0xFF, 0x00, 0, 255};
