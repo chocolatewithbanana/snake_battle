@@ -43,7 +43,7 @@ struct Pos {
 };
 
 enum Direction {
-    UP,
+    UP = 0,
     DOWN,
     LEFT,
     RIGHT,
@@ -92,9 +92,9 @@ bool init() {
 
 bool loadMedia() {
     // Load font
-    font = TTF_OpenFont("Ubuntu-Regular.ttf", 24);
+    font = TTF_OpenFont("COMIC.TTF", 24);
     if (!font) {
-        printSdlError("Loading Ubuntu-Regular.ttf");
+        printSdlError("Loading COMIC.TTF");
         return false;
     }
 
@@ -383,6 +383,7 @@ void renderPlayersScore(struct Player* players, size_t players_size) {
 
 enum Mode {
     MENU,
+    OPTIONS_MENU,
     RUNNING,
     GAME_OVER
 };
@@ -393,19 +394,50 @@ void reset(struct Game* p_game, struct Player* players, size_t players_size) {
         playerInit(&players[i]);
     }
 
-    players[0].bindings[LEFT] = SDLK_LEFT;
-    players[0].bindings[RIGHT] = SDLK_RIGHT;
-    players[0].bindings[UP] = SDLK_UP;
-    players[0].bindings[DOWN] = SDLK_DOWN;
-
-    players[1].bindings[LEFT] = SDLK_a;
-    players[1].bindings[RIGHT] = SDLK_d;
-    players[1].bindings[UP] = SDLK_w;
-    players[1].bindings[DOWN] = SDLK_s;
 
     players[1].pos.x = GRID_SIZE-1;
     players[1].pos.y = GRID_SIZE-1;
     players[1].direc = LEFT;
+}
+
+void renderButtons(char** texts, size_t button_qty, SDL_Rect* hitbox) {
+    int total_height = 0;
+
+    for (size_t i = 0; i < button_qty; i++) {
+        int h;
+        TTF_SizeText(font, texts[i], NULL, &h);
+        total_height += h;
+    }
+    
+    int y = WINDOW_HEIGHT/2 - total_height/2; 
+
+    if (y < 0) assert(false && "Too large menu buttons");
+
+    SDL_Color font_color = {0xFF, 0x00, 0, 255};
+    for (size_t i = 0; i < button_qty; i++) {
+        SDL_Surface* button_surf = TTF_RenderText_Solid(font, texts[i], font_color);
+        SDL_Texture* button_text = SDL_CreateTextureFromSurface(renderer, button_surf);
+        SDL_FreeSurface(button_surf);
+
+        SDL_Rect button_rect;
+        TTF_SizeText(font, texts[i], &button_rect.w, &button_rect.h);
+        button_rect.x = WINDOW_WIDTH/2 - button_rect.w/2;
+        button_rect.y = y;
+
+        SDL_RenderCopy(renderer, button_text, NULL, &button_rect);
+
+        SDL_DestroyTexture(button_text);
+
+        y += button_rect.h; 
+        hitbox[i] = button_rect;
+    }
+}
+
+bool rectContainsPos(SDL_Rect* rect, struct Pos* pos) {
+    return pos->x > rect->x
+        && pos->x < rect->x + rect->w
+        && pos->y > rect->y
+        && pos->y < rect->y + rect->h;
 }
 
 int main() {
@@ -426,10 +458,23 @@ int main() {
 
     reset(&game, players, PLAYERS_SIZE);
 
+    players[1].bindings[LEFT] = SDLK_LEFT;
+    players[1].bindings[RIGHT] = SDLK_RIGHT;
+    players[1].bindings[UP] = SDLK_UP;
+    players[1].bindings[DOWN] = SDLK_DOWN;
+
+    players[0].bindings[LEFT] = SDLK_a;
+    players[0].bindings[RIGHT] = SDLK_d;
+    players[0].bindings[UP] = SDLK_w;
+    players[0].bindings[DOWN] = SDLK_s;
+
     uint32_t game_over_delay = 1000;
     uint32_t game_over_start;
 
     bool already_running = false;
+
+    bool selected = false;
+    size_t selected_i; 
 
     while (true) {
         uint32_t curr_time = SDL_GetTicks();
@@ -445,44 +490,15 @@ int main() {
                 OPTIONS,
                 QUIT
             };
-            char* button_msg[3] = {"Start", "Options", "Quit"};
+            char* texts[3] = {"Start", "Options", "Quit"};
 
             if (already_running) {
-                button_msg[0] = "Continue";
+                texts[0] = "Continue";
             }
 
             SDL_Rect hitbox[3];
 
-            int total_height = 0;
-
-            for (size_t i = 0; i < 3; i++) {
-                int h;
-                TTF_SizeText(font, button_msg[i], NULL, &h);
-                total_height += h;
-            }
-            
-            int y = WINDOW_HEIGHT/2 - total_height/2; 
-
-            if (y < 0) assert(false && "Too large menu buttons");
-
-            SDL_Color font_color = {0xFF, 0x00, 0, 255};
-            for (size_t i = 0; i < 3; i++) {
-                SDL_Surface* button_surf = TTF_RenderText_Solid(font, button_msg[i], font_color);
-                SDL_Texture* button_text = SDL_CreateTextureFromSurface(renderer, button_surf);
-                SDL_FreeSurface(button_surf);
-
-                SDL_Rect button_rect;
-                TTF_SizeText(font, button_msg[i], &button_rect.w, &button_rect.h);
-                button_rect.x = WINDOW_WIDTH/2 - button_rect.w/2;
-                button_rect.y = y;
-
-                SDL_RenderCopy(renderer, button_text, NULL, &button_rect);
-
-                SDL_DestroyTexture(button_text);
-
-                y += button_rect.h; 
-                hitbox[i] = button_rect;
-            }
+            renderButtons(texts, 3, hitbox);
 
             // events
             SDL_Event event;
@@ -500,18 +516,15 @@ int main() {
                 } break;
                 case SDL_MOUSEBUTTONDOWN: {
                     for (size_t i = 0; i < 3; i++) {
-                        if (   event.button.x > hitbox[i].x
-                            && event.button.x < hitbox[i].x + hitbox[i].w
-                            && event.button.y > hitbox[i].y
-                            && event.button.y < hitbox[i].y + hitbox[i].h
-                        ) {
+                        struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
+                        if (rectContainsPos(&hitbox[i], &mouse_pos)) {
                             switch ((enum Button)i) {
                             case START: {
                                 mode = RUNNING;
                                 already_running = true;
                             } break;
                             case OPTIONS: {
-                                // @todo 
+                                mode = OPTIONS_MENU;
                             } break;
                             case QUIT: {
                                 goto cleanup_media;
@@ -521,6 +534,56 @@ int main() {
                     }
                 } break;
                 } 
+            }
+        } break;
+        case OPTIONS_MENU: {
+            // It has to be in this order
+            char messages[4][9];
+
+            strcpy(messages[0], "UP: 0");
+            strcpy(messages[1], "DOWN: 0");
+            strcpy(messages[2], "LEFT: 0");
+            strcpy(messages[3], "RIGHT: 0");
+
+            for (size_t i = 0; i < 4; i++) {
+                size_t len = strlen(messages[i]);
+
+                messages[i][len-1] = (char)players[0].bindings[i];
+            }
+
+            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
+            SDL_RenderClear(renderer);
+
+            char* p_messages[4] = {messages[0], messages[1], messages[2], messages[3]};
+
+            SDL_Rect hitbox[4];
+            renderButtons(p_messages, 4, hitbox);
+
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                switch (event.type) {
+                case SDL_QUIT: {
+                    goto cleanup_media; 
+                } break;
+                case SDL_KEYDOWN: {
+                    if (event.key.keysym.sym == SDLK_ESCAPE) {
+                        mode = MENU;
+                    }
+                    if (selected) {
+                        selected = false;
+                        players[0].bindings[selected_i] = event.key.keysym.sym;
+                    }
+                } break;
+                case SDL_MOUSEBUTTONDOWN: {
+                    struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
+                    for (size_t i = 0; i < 4; i++) {
+                        if (rectContainsPos(&hitbox[i], &mouse_pos)) {
+                            selected = true;
+                            selected_i = i;
+                        }
+                    }
+                } break;
+                }
             }
         } break;
         case RUNNING: {
