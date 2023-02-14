@@ -120,15 +120,6 @@ bool loadMedia() {
     return true;
 }
 
-SDL_Rect posToRect(struct Pos* p_pos) {
-    SDL_Rect rect;
-    rect.x = GRID_X0 + p_pos->x * GRID_DIMENS / GRID_SIZE;
-    rect.y = GRID_Y0 + p_pos->y * GRID_DIMENS / GRID_SIZE;
-    rect.w = GRID_DIMENS / GRID_SIZE;
-    rect.h = GRID_DIMENS / GRID_SIZE;
-
-    return rect;
-}
 
 struct Apple {
     struct Pos pos;
@@ -212,24 +203,34 @@ void playerOnInput(struct Player* p_player, SDL_Keycode key) {
     }
 }
 
-void playerCheckMoveCollide(
-    struct Player* p_player, 
+void playersUpdate(
     struct Player* players, size_t players_size,
     uint32_t curr_time,
     struct Apple* apples, size_t apples_size
 ) {
-    if (curr_time - p_player->last_movem_frame > p_player->movem_delay) {
-        p_player->last_movem_frame = curr_time;
-        p_player->reset_buffer_on_input = true;
+    // move
+    // @todo move out macro
+    struct Pos last_tail_pos[PLAYERS_SIZE];
+    for (size_t i = 0; i < players_size; i++) {
+        struct Player* p_player = &players[i];
 
-        struct Pos last_pos = p_player->pos;
+        if (curr_time - p_player->last_movem_frame > p_player->movem_delay) {
+            p_player->last_movem_frame = curr_time;
+            p_player->reset_buffer_on_input = true;
 
-        // move head
-        if (p_player->direc_i < p_player->direc_size) {
-            p_player->direc = p_player->direc_buff[p_player->direc_i++];
-        }
+            struct Pos last_pos = p_player->pos;
+            if (p_player->body_size > 0) {
+                last_tail_pos[i] = p_player->body[p_player->body_size-1];
+            } else {
+                last_tail_pos[i] = last_pos;
+            }
 
-        switch (p_player->direc) {
+            // move head
+            if (p_player->direc_i < p_player->direc_size) {
+                p_player->direc = p_player->direc_buff[p_player->direc_i++];
+            }
+
+            switch (p_player->direc) {
             case UP:
                 p_player->pos.y--;
             break;
@@ -245,48 +246,79 @@ void playerCheckMoveCollide(
             case NONE:
                 assert(false);
             break;
-        }
-
-        if (p_player->pos.x < 0) {
-            p_player->pos.x = GRID_SIZE-1;
-        } else if (p_player->pos.x >= GRID_SIZE) {
-            p_player->pos.x = 0;
-        }
-
-        if (p_player->pos.y < 0) {
-            p_player->pos.y = GRID_SIZE-1;
-        } else if (p_player->pos.y >= GRID_SIZE) {
-            p_player->pos.y = 0;
-        }
-
-        // check apples
-        for (size_t i = 0; i < apples_size; i++) {
-            if (p_player->pos.x == apples[i].pos.x
-                    && p_player->pos.y == apples[i].pos.y) {
-                p_player->score++;
-                p_player->body_size++;
-
-                appleInit(&apples[i]);
             }
-        }
 
-        // move body
-        if (p_player->body_size > 0) {
-            for (size_t i = p_player->body_size-1; i > 0; i--) {
-                p_player->body[i] = p_player->body[i-1]; 
+            if (p_player->pos.x < 0) {
+                p_player->pos.x = GRID_SIZE-1;
+            } else if (p_player->pos.x >= GRID_SIZE) {
+                p_player->pos.x = 0;
             }
-            p_player->body[0] = last_pos;
-        }
 
-        // check colision
-        for (size_t i = 0; i < players_size; i++) {
-            for (size_t j = 0; j < players[i].body_size; j++) {
-                if (players[i].body[j].x == p_player->pos.x && players[i].body[j].y == p_player->pos.y) {
-                    p_player->game_over = true;
+            if (p_player->pos.y < 0) {
+                p_player->pos.y = GRID_SIZE-1;
+            } else if (p_player->pos.y >= GRID_SIZE) {
+                p_player->pos.y = 0;
+            }
+
+            // move body
+            if (p_player->body_size > 0) {
+                for (size_t i = p_player->body_size-1; i > 0; i--) {
+                    p_player->body[i] = p_player->body[i-1]; 
                 }
+                p_player->body[0] = last_pos;
             }
         }
     }
+
+    // check apples
+    for (size_t i = 0; i < players_size; i++) {
+        struct Player* p_player = &players[i];
+
+        for (size_t j = 0; j < apples_size; j++) {
+            if (p_player->pos.x == apples[j].pos.x
+                    && p_player->pos.y == apples[j].pos.y) {
+                p_player->score++;
+                
+                appleInit(&apples[j]);
+
+                p_player->body_size++; 
+                p_player->body[p_player->body_size-1] = last_tail_pos[i];
+            }
+        }
+    }
+
+    // check colision
+    for (size_t i = 0; i < players_size; i++) {
+        struct Player* p_this = &players[i];
+
+        for (size_t j = 0; j < players_size; j++) {
+            struct Player* p_other = &players[j];
+
+            if (p_this != p_other 
+                    && p_this->pos.x == p_other->pos.x 
+                    && p_this->pos.y == p_other->pos.y) {
+                p_this->game_over = true;
+            }
+
+            for (size_t k = 0; k < p_other->body_size; k++) {
+                struct Pos* p_body = &p_other->body[k];
+                
+                if (p_this->pos.x == p_body->x && p_this->pos.y == p_body->y) {
+                    p_this->game_over = true;
+                }    
+            }
+        }
+    }
+}
+
+SDL_Rect posToRect(struct Pos* p_pos) {
+    SDL_Rect rect;
+    rect.x = GRID_X0 + p_pos->x * GRID_DIMENS / GRID_SIZE;
+    rect.y = GRID_Y0 + p_pos->y * GRID_DIMENS / GRID_SIZE;
+    rect.w = GRID_DIMENS / GRID_SIZE;
+    rect.h = GRID_DIMENS / GRID_SIZE;
+
+    return rect;
 }
 
 void playerRenderBody(struct Player* p_player) {
@@ -301,21 +333,21 @@ void playerRenderHead(struct Player* p_player) {
 
     double rotation;
     switch (p_player->direc) {
-        case UP:
-            rotation = 0;
-        break;
-        case RIGHT:
-            rotation = 90;
-        break;
-        case DOWN:
-            rotation = 180;
-        break;
-        case LEFT:
-            rotation = 270;
-        break;
-        case NONE:
-            assert(false);
-        break;
+    case UP:
+        rotation = 0;
+    break;
+    case RIGHT:
+        rotation = 90;
+    break;
+    case DOWN:
+        rotation = 180;
+    break;
+    case LEFT:
+        rotation = 270;
+    break;
+    case NONE:
+        assert(false);
+    break;
     }
     
     SDL_RenderCopyEx(renderer, head_text, NULL, &head_rect, rotation, NULL, 0);
@@ -355,7 +387,7 @@ enum Mode {
     GAME_OVER
 };
 
-void resetGame(struct Game* p_game, struct Player* players, size_t players_size) {
+void reset(struct Game* p_game, struct Player* players, size_t players_size) {
     gameInit(p_game);
     for (size_t i = 0; i < players_size; i++) {
         playerInit(&players[i]);
@@ -392,208 +424,207 @@ int main() {
     struct Game game;
     struct Player players[PLAYERS_SIZE];
 
-    resetGame(&game, players, PLAYERS_SIZE);
+    reset(&game, players, PLAYERS_SIZE);
 
     uint32_t game_over_delay = 1000;
     uint32_t game_over_start;
 
     bool already_running = false;
 
-    uint32_t curr_time;
-
     while (true) {
-        curr_time = SDL_GetTicks();
+        uint32_t curr_time = SDL_GetTicks();
         switch (mode) {
-            case MENU: {
-                enum Button {
-                    START,
-                    OPTIONS,
-                    QUIT
-                };
-                char* button_msg[3] = {"Start", "Options", "Quit"};
+        case MENU: {
+            // clean screen
+            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
+            SDL_RenderClear(renderer);
 
-                if (already_running) {
-                    button_msg[0] = "Continue";
-                }
+            // draw buttons
+            enum Button {
+                START,
+                OPTIONS,
+                QUIT
+            };
+            char* button_msg[3] = {"Start", "Options", "Quit"};
 
-                SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
-                SDL_RenderClear(renderer);
+            if (already_running) {
+                button_msg[0] = "Continue";
+            }
 
-                SDL_Rect hitbox[3];
+            SDL_Rect hitbox[3];
 
-                // get first y
-                int total_height = 0;
+            int total_height = 0;
 
-                for (size_t i = 0; i < 3; i++) {
-                    int h;
-                    TTF_SizeText(font, button_msg[i], NULL, &h);
-                    total_height += h;
-                }
-                
-                int y = WINDOW_HEIGHT/2 - total_height/2; 
+            for (size_t i = 0; i < 3; i++) {
+                int h;
+                TTF_SizeText(font, button_msg[i], NULL, &h);
+                total_height += h;
+            }
+            
+            int y = WINDOW_HEIGHT/2 - total_height/2; 
 
-                if (y < 0) assert(false && "Too large menu buttons");
+            if (y < 0) assert(false && "Too large menu buttons");
 
-                SDL_Color font_color = {0xFF, 0x00, 0, 255};
-                for (size_t i = 0; i < 3; i++) {
-                    SDL_Surface* button_surf = TTF_RenderText_Solid(font, button_msg[i], font_color);
-                    SDL_Texture* button_text = SDL_CreateTextureFromSurface(renderer, button_surf);
-                    SDL_FreeSurface(button_surf);
+            SDL_Color font_color = {0xFF, 0x00, 0, 255};
+            for (size_t i = 0; i < 3; i++) {
+                SDL_Surface* button_surf = TTF_RenderText_Solid(font, button_msg[i], font_color);
+                SDL_Texture* button_text = SDL_CreateTextureFromSurface(renderer, button_surf);
+                SDL_FreeSurface(button_surf);
 
-                    SDL_Rect button_rect;
-                    TTF_SizeText(font, button_msg[i], &button_rect.w, &button_rect.h);
-                    button_rect.x = WINDOW_WIDTH/2 - button_rect.w/2;
-                    button_rect.y = y;
+                SDL_Rect button_rect;
+                TTF_SizeText(font, button_msg[i], &button_rect.w, &button_rect.h);
+                button_rect.x = WINDOW_WIDTH/2 - button_rect.w/2;
+                button_rect.y = y;
 
-                    SDL_RenderCopy(renderer, button_text, NULL, &button_rect);
+                SDL_RenderCopy(renderer, button_text, NULL, &button_rect);
 
-                    SDL_DestroyTexture(button_text);
+                SDL_DestroyTexture(button_text);
 
-                    y += button_rect.h; 
-                    hitbox[i] = button_rect;
-                }
+                y += button_rect.h; 
+                hitbox[i] = button_rect;
+            }
 
-                // events
-                SDL_Event event;
-                while (SDL_PollEvent(&event)) {
-                    switch (event.type) {
-                        case SDL_QUIT: {
-                            goto cleanup_media; 
-                        } break;
-                        case SDL_KEYDOWN: {
-                            switch (event.key.keysym.sym) {
-                                case SDLK_ESCAPE: {
-                                    mode = RUNNING;
-                                } break;
-                            }
-                        } break;
-                        case SDL_MOUSEBUTTONDOWN: {
-                            for (size_t i = 0; i < 3; i++) {
-                                if (   event.button.x > hitbox[i].x
-                                    && event.button.x < hitbox[i].x + hitbox[i].w
-                                    && event.button.y > hitbox[i].y
-                                    && event.button.y < hitbox[i].y + hitbox[i].h
-                                ) {
-                                    switch ((enum Button)i) {
-                                        case START: {
-                                            mode = RUNNING;
-                                            already_running = true;
-                                        } break;
-                                        case OPTIONS: {
-                                            // @todo 
-                                        } break;
-                                        case QUIT: {
-                                            goto cleanup_media;
-                                        } break;
-                                    }
-                                }
-                            }
-                        } break;
-                    } 
-                }
-            } break;
-            case RUNNING: {
-                for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                    if (players[i].game_over) {
-                        mode = GAME_OVER;
-                        game_over_start = curr_time;
-                        already_running = false;
+            // events
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                switch (event.type) {
+                case SDL_QUIT: {
+                    goto cleanup_media; 
+                } break;
+                case SDL_KEYDOWN: {
+                    switch (event.key.keysym.sym) {
+                    case SDLK_ESCAPE: {
+                        mode = RUNNING;
+                    } break;
                     }
-                }
-
-                // ==========
-                // Input
-                // ==========
-                SDL_Event event;
-                while (SDL_PollEvent(&event)) {
-                    switch (event.type) {
-                        case SDL_QUIT:
-                            goto cleanup_media;
-                        break;
-                        case SDL_KEYDOWN:
-                            for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                                playerOnInput(&players[i], event.key.keysym.sym);
+                } break;
+                case SDL_MOUSEBUTTONDOWN: {
+                    for (size_t i = 0; i < 3; i++) {
+                        if (   event.button.x > hitbox[i].x
+                            && event.button.x < hitbox[i].x + hitbox[i].w
+                            && event.button.y > hitbox[i].y
+                            && event.button.y < hitbox[i].y + hitbox[i].h
+                        ) {
+                            switch ((enum Button)i) {
+                            case START: {
+                                mode = RUNNING;
+                                already_running = true;
+                            } break;
+                            case OPTIONS: {
+                                // @todo 
+                            } break;
+                            case QUIT: {
+                                goto cleanup_media;
+                            } break;
                             }
-                            if (event.key.keysym.sym == SDLK_ESCAPE) {
-                                mode = MENU;
-                            }
-                        break;
+                        }
                     }
+                } break;
+                } 
+            }
+        } break;
+        case RUNNING: {
+            for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+                if (players[i].game_over) {
+                    mode = GAME_OVER;
+                    game_over_start = curr_time;
+                    already_running = false;
                 }
+            }
 
-                for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                    playerCheckMoveCollide(&players[i], players, PLAYERS_SIZE, curr_time, game.apples, game.apples_size);
-                }
-
-                // =============
-                // Render
-                // =============
-                // Background
-                SDL_SetRenderDrawColor(renderer, 0x3C, 0xDF, 0xFF, 255);
-                SDL_RenderClear(renderer);
-
-                // Grid
-                SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 255);
-                SDL_Rect grid_rect = {.x = GRID_X0, .y = GRID_Y0, .w = GRID_DIMENS, .h = GRID_DIMENS};
-                SDL_RenderFillRect(renderer, &grid_rect);
-
-                // Body
-                for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                    playerRenderBody(&players[i]);
-                }
-
-                // Apple
-                SDL_SetRenderDrawColor(renderer, 0xFF, 0, 0, 255);
-                for (size_t i = 0; i < game.apples_size; i++) {
-                    SDL_Rect apple_rect = posToRect(&game.apples[i].pos);
-                    SDL_RenderFillRect(renderer, &apple_rect);
-                }
-
-                // Snake Head
-                for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                    playerRenderHead(&players[i]);
-                }
-
-                // Score
-               
-                for (size_t i = 0; i < PLAYERS_SIZE; i++) {
-                    if (players[i].score > 999) {
-                        fprintf(stderr, "Score too big!\n");
-                        goto cleanup_media;
+            // ==========
+            // Input
+            // ==========
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                switch (event.type) {
+                case SDL_QUIT:
+                    goto cleanup_media;
+                break;
+                case SDL_KEYDOWN:
+                    for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+                        playerOnInput(&players[i], event.key.keysym.sym);
                     }
-                }
-
-                renderPlayersScore(players, PLAYERS_SIZE);
-            } break;
-            case GAME_OVER: {
-                SDL_Event event;
-                while (SDL_PollEvent(&event)) {
-                    switch (event.type) {
-                        case SDL_QUIT: {
-                            goto cleanup_media; 
-                        } break;
+                    if (event.key.keysym.sym == SDLK_ESCAPE) {
+                        mode = MENU;
                     }
+                break;
                 }
+            }
 
-                if (curr_time - game_over_start > game_over_delay) {
-                    mode = MENU;
-                    resetGame(&game, players, PLAYERS_SIZE);
+            // =============
+            // Update
+            // =============
+            playersUpdate(players, PLAYERS_SIZE, curr_time, game.apples, game.apples_size);
+
+            // =============
+            // Render
+            // =============
+            // Background
+            SDL_SetRenderDrawColor(renderer, 0x3C, 0xDF, 0xFF, 255);
+            SDL_RenderClear(renderer);
+
+            // Grid
+            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 255);
+            SDL_Rect grid_rect = {.x = GRID_X0, .y = GRID_Y0, .w = GRID_DIMENS, .h = GRID_DIMENS};
+            SDL_RenderFillRect(renderer, &grid_rect);
+
+            // Body
+            for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+                playerRenderBody(&players[i]);
+            }
+
+            // Apple
+            SDL_SetRenderDrawColor(renderer, 0xFF, 0, 0, 255);
+            for (size_t i = 0; i < game.apples_size; i++) {
+                SDL_Rect apple_rect = posToRect(&game.apples[i].pos);
+                SDL_RenderFillRect(renderer, &apple_rect);
+            }
+
+            // Snake Head
+            for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+                playerRenderHead(&players[i]);
+            }
+
+            // Score
+            for (size_t i = 0; i < PLAYERS_SIZE; i++) {
+                if (players[i].score > 999) {
+                    fprintf(stderr, "Score too big!\n");
+                    goto cleanup_media;
                 }
+            }
 
-                SDL_Color font_color = {0xFF, 0x00, 0, 255};
+            renderPlayersScore(players, PLAYERS_SIZE);
+        } break;
+        case GAME_OVER: {
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                switch (event.type) {
+                case SDL_QUIT: {
+                    goto cleanup_media; 
+                } break;
+                }
+            }
 
-                SDL_Surface* game_over_surf = TTF_RenderText_Solid(font, "Game Over", font_color);
-                SDL_Texture* game_over_text = SDL_CreateTextureFromSurface(renderer, game_over_surf);
-                SDL_FreeSurface(game_over_surf);
+            if (curr_time - game_over_start > game_over_delay) {
+                mode = MENU;
+                reset(&game, players, PLAYERS_SIZE);
+            }
 
-                SDL_Rect game_over_rect;
-                TTF_SizeText(font, "Game Over", &game_over_rect.w, &game_over_rect.h);
-                game_over_rect.x = WINDOW_WIDTH/2 - game_over_rect.w/2;
-                game_over_rect.y = WINDOW_HEIGHT/2 - game_over_rect.h/2;
-                SDL_RenderCopy(renderer, game_over_text, NULL, &game_over_rect);
+            SDL_Color font_color = {0xFF, 0x00, 0, 255};
 
-                SDL_DestroyTexture(game_over_text);
-            }; break;
+            SDL_Surface* game_over_surf = TTF_RenderText_Solid(font, "Game Over", font_color);
+            SDL_Texture* game_over_text = SDL_CreateTextureFromSurface(renderer, game_over_surf);
+            SDL_FreeSurface(game_over_surf);
+
+            SDL_Rect game_over_rect;
+            TTF_SizeText(font, "Game Over", &game_over_rect.w, &game_over_rect.h);
+            game_over_rect.x = WINDOW_WIDTH/2 - game_over_rect.w/2;
+            game_over_rect.y = WINDOW_HEIGHT/2 - game_over_rect.h/2;
+            SDL_RenderCopy(renderer, game_over_text, NULL, &game_over_rect);
+
+            SDL_DestroyTexture(game_over_text);
+        }; break;
         }
 
         SDL_RenderPresent(renderer);
