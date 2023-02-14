@@ -417,6 +417,7 @@ void renderPlayersScore(struct Player* players, size_t players_size) {
 
 enum Mode {
     MENU,
+    REMAP_MENU,
     OPTIONS_MENU,
     RUNNING,
     GAME_OVER
@@ -471,7 +472,7 @@ int main() {
 
     struct Game game;
     struct Player players[MAX_PLAYERS_SIZE];
-    size_t players_size = 2;
+    size_t players_size = 1;
 
     reset(&game, players, MAX_PLAYERS_SIZE);
 
@@ -568,7 +569,7 @@ int main() {
                 } 
             }
         } break;
-        case OPTIONS_MENU: {
+        case REMAP_MENU: {
             SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
             SDL_RenderClear(renderer);
 
@@ -591,24 +592,24 @@ int main() {
             // ===================
             // Centered buttons
             // ===================
-#define OPTIONS_MENU_BUTTONS_SIZE 4
+#define REMAP_MENU_BUTTONS_SIZE 4
 
-            SDL_Rect hitbox[OPTIONS_MENU_BUTTONS_SIZE];
+            SDL_Rect hitbox[REMAP_MENU_BUTTONS_SIZE];
             {
-                char msg[OPTIONS_MENU_BUTTONS_SIZE][9];
+                char msg[REMAP_MENU_BUTTONS_SIZE][9];
                 // It has to be in this order
-                char* pre_msg[OPTIONS_MENU_BUTTONS_SIZE] = {
+                char* pre_msg[REMAP_MENU_BUTTONS_SIZE] = {
                     "DOWN: 0",
                     "LEFT: 0",
                     "RIGHT: 0",
                     "UP: 0"
                 };
 
-                for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
+                for (size_t i = 0; i < REMAP_MENU_BUTTONS_SIZE; i++) {
                     strcpy(msg[i], pre_msg[i]);
                 }
 
-                for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
+                for (size_t i = 0; i < REMAP_MENU_BUTTONS_SIZE; i++) {
                     size_t len = strlen(msg[i]);
 
                     SDL_Keycode key = players[sel_player_i].bindings[i];
@@ -633,12 +634,12 @@ int main() {
                     }
                 }
 
-                char* p_msg[OPTIONS_MENU_BUTTONS_SIZE];
-                for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
+                char* p_msg[REMAP_MENU_BUTTONS_SIZE];
+                for (size_t i = 0; i < REMAP_MENU_BUTTONS_SIZE; i++) {
                     p_msg[i] = msg[i]; 
                 }
 
-                SDL_Color colors[OPTIONS_MENU_BUTTONS_SIZE] = {
+                SDL_Color colors[REMAP_MENU_BUTTONS_SIZE] = {
                     button_released_color,
                     button_released_color,
                     button_released_color,
@@ -647,8 +648,86 @@ int main() {
 
                 if (remap_button_sel) colors[remap_button_sel_i] = button_pressed_color;
 
-                renderMsgsCentered(p_msg, OPTIONS_MENU_BUTTONS_SIZE, hitbox, colors);
+                renderMsgsCentered(p_msg, REMAP_MENU_BUTTONS_SIZE, hitbox, colors);
             }
+
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                switch (event.type) {
+                case SDL_QUIT: {
+                    goto cleanup_media; 
+                } break;
+                case SDL_KEYDOWN: {
+                    if (event.key.keysym.sym == SDLK_ESCAPE) {
+                        mode = OPTIONS_MENU;
+                    }
+                    if (remap_button_sel) {
+                        remap_button_sel = false;
+                        players[sel_player_i].bindings[remap_button_sel_i] = event.key.keysym.sym;
+                    }
+                } break;
+                case SDL_MOUSEBUTTONDOWN: {
+                    struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
+                    bool pressed_button = false;
+                    for (size_t i = 0; i < REMAP_MENU_BUTTONS_SIZE; i++) {
+                        if (!remap_button_sel && rectContainsPos(&hitbox[i], &mouse_pos)) {
+                            pressed_button = true;
+                            remap_button_sel = true;
+                            remap_button_sel_i = i;
+                        } 
+                    }
+                    if (!pressed_button) {
+                        remap_button_sel = false;
+                    }
+
+                    if (rectContainsPos(&sel_player_hitbox, &mouse_pos)) {
+                        sel_player_i++;
+                        if (sel_player_i >= players_size) {
+                            sel_player_i = 0;
+                        }
+                    }
+                } break;
+                }
+            }
+        } break;
+        case OPTIONS_MENU: {
+            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
+            SDL_RenderClear(renderer);
+
+#define OPTIONS_MENU_BUTTONS_SIZE 2
+
+            SDL_Rect hitbox[OPTIONS_MENU_BUTTONS_SIZE];
+            char msg[OPTIONS_MENU_BUTTONS_SIZE][11];
+
+            enum Options {
+                PLAYERS,
+                REMAP
+            };
+
+            // It has to be in this order
+            char* pre_msg[OPTIONS_MENU_BUTTONS_SIZE] = {
+                "Players: 0",
+                "Remap"
+            };
+
+            for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
+                strcpy(msg[i], pre_msg[i]);
+            }
+
+            size_t len = strlen(msg[PLAYERS]);
+            msg[PLAYERS][len-1] = players_size + '0';
+
+            char* p_msg[OPTIONS_MENU_BUTTONS_SIZE];
+            for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
+                p_msg[i] = msg[i]; 
+            }
+
+            SDL_Color colors[OPTIONS_MENU_BUTTONS_SIZE] = {
+                button_released_color,
+                button_released_color
+            };
+
+            renderMsgsCentered(p_msg, OPTIONS_MENU_BUTTONS_SIZE, hitbox, colors);
 
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -667,23 +746,14 @@ int main() {
                 } break;
                 case SDL_MOUSEBUTTONDOWN: {
                     struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
-                    bool pressed_button = false;
-                    for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
-                        if (!remap_button_sel && rectContainsPos(&hitbox[i], &mouse_pos)) {
-                            pressed_button = true;
-                            remap_button_sel = true;
-                            remap_button_sel_i = i;
-                        } 
-                    }
-                    if (!pressed_button) {
-                        remap_button_sel = false;
-                    }
-
-                    if (rectContainsPos(&sel_player_hitbox, &mouse_pos)) {
-                        sel_player_i++;
-                        if (sel_player_i >= players_size) {
-                            sel_player_i = 0;
+                    if (rectContainsPos(&hitbox[PLAYERS], &mouse_pos)) {
+                        players_size++;
+                        if (players_size > MAX_PLAYERS_SIZE) {
+                            players_size = 1;
                         }
+                    }
+                    if (rectContainsPos(&hitbox[REMAP], &mouse_pos)) {
+                        mode = REMAP_MENU;
                     }
                 } break;
                 }
