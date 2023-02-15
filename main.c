@@ -119,27 +119,37 @@ bool loadMedia() {
     return true;
 }
 
+#define APPLE_TYPE_SIZE 3
+
+enum AppleType {
+    NORMAL,
+    ZOMBIE,
+    SONIC
+};
+
 struct Apple {
     struct Pos pos;
+    enum AppleType type;
 };
 
 void appleInit(struct Apple* p_apple) {
     p_apple->pos.x = rand() % GRID_SIZE;
     p_apple->pos.y = rand() % GRID_SIZE;
+    p_apple->type = rand() % APPLE_TYPE_SIZE;
 }
 
-struct Game {
+struct AppleSpawner {
     struct Apple apples[APPLES_SIZE];
     size_t apples_size;
     uint32_t last_spawn_frame;
     uint32_t spawn_delay;
 };
 
-void gameInit(struct Game* p_game) {
-    appleInit(&p_game->apples[0]);
-    p_game->apples_size = 1;
-    p_game->last_spawn_frame = 0;
-    p_game->spawn_delay = 10000;
+void appleSpawnerInit(struct AppleSpawner* p_apple_spawner) {
+    appleInit(&p_apple_spawner->apples[0]);
+    p_apple_spawner->apples_size = 1;
+    p_apple_spawner->last_spawn_frame = 0;
+    p_apple_spawner->spawn_delay = 10000;
 }
 
 struct Player {
@@ -423,8 +433,8 @@ enum Mode {
     GAME_OVER
 };
 
-void reset(struct Game* p_game, struct Player* players, size_t players_size) {
-    gameInit(p_game);
+void reset(struct AppleSpawner* p_apple_spawner, struct Player* players, size_t players_size) {
+    appleSpawnerInit(p_apple_spawner);
     for (size_t i = 0; i < players_size; i++) {
         playerInit(&players[i]);
     }
@@ -470,11 +480,11 @@ int main() {
 
     enum Mode mode = MENU;
 
-    struct Game game;
+    struct AppleSpawner apple_spawner;
     struct Player players[MAX_PLAYERS_SIZE];
     size_t players_size = 1;
 
-    reset(&game, players, MAX_PLAYERS_SIZE);
+    reset(&apple_spawner, players, MAX_PLAYERS_SIZE);
 
     SDL_Keycode bindings[MAX_PLAYERS_SIZE][4] = {
         {SDLK_s, SDLK_a, SDLK_d, SDLK_w},
@@ -796,7 +806,7 @@ int main() {
             // =============
             // Update
             // =============
-            playersUpdate(players, players_size, curr_time, game.apples, game.apples_size);
+            playersUpdate(players, players_size, curr_time, apple_spawner.apples, apple_spawner.apples_size);
 
             // =============
             // Render
@@ -817,8 +827,8 @@ int main() {
 
             // Apple
             SDL_SetRenderDrawColor(renderer, 0xFF, 0, 0, 255);
-            for (size_t i = 0; i < game.apples_size; i++) {
-                SDL_Rect apple_rect = posToRect(&game.apples[i].pos);
+            for (size_t i = 0; i < apple_spawner.apples_size; i++) {
+                SDL_Rect apple_rect = posToRect(&apple_spawner.apples[i].pos);
                 SDL_RenderFillRect(renderer, &apple_rect);
             }
 
@@ -849,17 +859,39 @@ int main() {
 
             if (curr_time - game_over_start > game_over_delay) {
                 mode = MENU;
-                reset(&game, players, MAX_PLAYERS_SIZE);
+                reset(&apple_spawner, players, MAX_PLAYERS_SIZE);
             }
 
             SDL_Color font_color = {0xFF, 0x00, 0, 255};
 
-            SDL_Surface* game_over_surf = TTF_RenderText_Solid(font, "Game Over", font_color);
+            int max_score = 0;
+            size_t winner;
+            bool draw = false;
+            for (size_t i = 0; i < players_size; i++) {
+                if (i == 0) max_score = players[i].score;
+                else if (players[i].score == max_score) {
+                    draw = true;
+                } else if (players[i].score > max_score) {
+                    max_score = players[i].score;
+                    winner = i;
+                    draw = false;
+                }     
+            }
+
+            char msg[14];
+
+            if (draw) strcpy(msg, "Draw");
+            else {
+                strcpy(msg, "Player 0 wins"); 
+                msg[7] = winner + 1 + '0';
+            }
+
+            SDL_Surface* game_over_surf = TTF_RenderText_Solid(font, msg, font_color);
             SDL_Texture* game_over_text = SDL_CreateTextureFromSurface(renderer, game_over_surf);
             SDL_FreeSurface(game_over_surf);
 
             SDL_Rect game_over_rect;
-            TTF_SizeText(font, "Game Over", &game_over_rect.w, &game_over_rect.h);
+            TTF_SizeText(font, msg, &game_over_rect.w, &game_over_rect.h);
             game_over_rect.x = WINDOW_WIDTH/2 - game_over_rect.w/2;
             game_over_rect.y = WINDOW_HEIGHT/2 - game_over_rect.h/2;
             SDL_RenderCopy(renderer, game_over_text, NULL, &game_over_rect);
