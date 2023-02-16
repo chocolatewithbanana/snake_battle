@@ -20,7 +20,9 @@
 #define MAX_PLAYERS_SIZE 4
 
 #define DIREC_BUFFER_SIZE 2
-#define APPLES_SIZE 100
+#define APPLES_SIZE 1000
+
+#define DEAD_BODIES_SIZE 1000
 
 #define SPEEDUP_RATE 0.05
 #define MIN_MOVEM_DELAY 80
@@ -119,37 +121,60 @@ bool loadMedia() {
     return true;
 }
 
-#define APPLE_TYPE_SIZE 3
+#define POWERUP_SIZE 3
 
-enum AppleType {
-    NORMAL,
+enum Powerup {
+    NONE,
     ZOMBIE,
-    SONIC
+    SONIC,
 };
 
 struct Apple {
     struct Pos pos;
-    enum AppleType type;
+    enum Powerup type;
 };
 
 void appleInit(struct Apple* p_apple) {
     p_apple->pos.x = rand() % GRID_SIZE;
     p_apple->pos.y = rand() % GRID_SIZE;
-    p_apple->type = rand() % APPLE_TYPE_SIZE;
+
+    int odds[POWERUP_SIZE];
+    odds[NONE] = 20; 
+    odds[ZOMBIE] = 1;
+    odds[SONIC] = 2;
+
+    int total = 0;
+    for (size_t i = 0; i < POWERUP_SIZE; i++) {
+        total += odds[i];
+    }
+
+    int r = rand() % total;
+
+    int accum = 0;
+    for (size_t i = 0; i < POWERUP_SIZE; i++) {
+        if (r < odds[i] + accum) {
+            p_apple->type = (enum Powerup)i;
+            break;
+        }
+        accum += odds[i];
+    }
 }
 
 struct AppleSpawner {
     struct Apple apples[APPLES_SIZE];
     size_t apples_size;
+
     uint32_t last_spawn_frame;
     uint32_t spawn_delay;
 };
 
 void appleSpawnerInit(struct AppleSpawner* p_apple_spawner) {
-    appleInit(&p_apple_spawner->apples[0]);
+    for (size_t i = 0; i < p_apple_spawner->apples_size; i++) {
+        appleInit(&p_apple_spawner->apples[i]);
+    }
     p_apple_spawner->apples_size = 1;
     p_apple_spawner->last_spawn_frame = 0;
-    p_apple_spawner->spawn_delay = 10000;
+    p_apple_spawner->spawn_delay = 3000;
 }
 
 struct Player {
@@ -168,6 +193,12 @@ struct Player {
     int direc_size;
     int direc_i;
     bool reset_buffer_on_input;
+
+    uint32_t zombie_start;
+    uint32_t zombie_duration;
+
+    uint32_t sonic_start;
+    uint32_t sonic_duration;
 
     SDL_Keycode bindings[4];
 };
@@ -188,6 +219,12 @@ void playerInit(struct Player* p_player) {
     p_player->direc_size = 0;
     p_player->direc_i = 0;
     p_player->reset_buffer_on_input = true;
+
+    p_player->zombie_start = 0;
+    p_player->zombie_duration = 3000;
+
+    p_player->sonic_start = 0;
+    p_player->sonic_duration = 3000;
 }
 
 void playerOnInput(struct Player* p_player, SDL_Keycode key) {
@@ -215,18 +252,24 @@ void playerOnInput(struct Player* p_player, SDL_Keycode key) {
 
 void playersUpdate(
     struct Player* players, size_t players_size,
+    struct Pos* dead_bodies, size_t *dead_bodies_size,
     uint32_t curr_time,
     struct Apple* apples, size_t apples_size
 ) {
     // move
-    // @todo move out macro
     struct Pos last_tail_pos[MAX_PLAYERS_SIZE];
     for (size_t i = 0; i < players_size; i++) {
         if (players[i].game_over) continue;
 
         struct Player* p_player = &players[i];
 
-        if (curr_time - p_player->last_movem_frame > p_player->movem_delay) {
+        // speed
+        uint32_t movem_delay = p_player->movem_delay;
+        if (curr_time < p_player->sonic_start + p_player->sonic_duration) {
+            movem_delay /= 2;
+        }
+
+        if (curr_time - p_player->last_movem_frame > movem_delay) {
             p_player->last_movem_frame = curr_time;
             p_player->reset_buffer_on_input = true;
 
@@ -276,6 +319,15 @@ void playersUpdate(
                 }
                 p_player->body[0] = last_pos;
             }
+
+            // zombie
+            if (curr_time < p_player->zombie_start + p_player->zombie_duration) {
+                if (players[i].body_size > 0) {
+                    dead_bodies[(*dead_bodies_size)++] = last_tail_pos[i];
+
+                    players[i].body_size--;
+                }
+            }
         }
     }
 
@@ -289,14 +341,30 @@ void playersUpdate(
             if (p_player->pos.x == apples[j].pos.x
                     && p_player->pos.y == apples[j].pos.y) {
                 p_player->score++;
+
+                switch (apples[j].type) {
+                case NONE: {
+                } break;
+                case ZOMBIE: {
+                    printf("zombie\n");
+                    p_player->zombie_start = curr_time;
+                } break;
+                case SONIC: {
+                    printf("sonic\n");
+                    p_player->sonic_start = curr_time;
+                } break;
+                }
                 
                 appleInit(&apples[j]);
 
                 p_player->body_size++; 
                 p_player->body[p_player->body_size-1] = last_tail_pos[i];
+
             }
         }
     }
+
+    
 
     // check colision
     for (size_t i = 0; i < players_size; i++) {
@@ -319,6 +387,13 @@ void playersUpdate(
                 if (p_this->pos.x == p_body->x && p_this->pos.y == p_body->y) {
                     p_this->game_over = true;
                 }    
+            }
+        }
+
+        for (size_t j = 0; j < *dead_bodies_size; j++) {
+            if (players[i].pos.x == dead_bodies[j].x
+                && players[i].pos.y == dead_bodies[j].y) {
+                players[i].game_over = true;
             }
         }
     }
@@ -497,6 +572,9 @@ int main() {
         memcpy(&players[i].bindings, bindings[i], sizeof(SDL_Keycode)*4);
     }
 
+    struct Pos dead_bodies[DEAD_BODIES_SIZE] = {0};
+    size_t dead_bodies_size = 0;
+
     uint32_t game_over_delay = 1000;
     uint32_t game_over_start;
 
@@ -584,7 +662,7 @@ int main() {
             SDL_RenderClear(renderer);
 
             // =====================
-            // Change player button
+            // Select player button
             // =====================
             SDL_Rect sel_player_hitbox;
             {
@@ -806,7 +884,17 @@ int main() {
             // =============
             // Update
             // =============
-            playersUpdate(players, players_size, curr_time, apple_spawner.apples, apple_spawner.apples_size);
+            playersUpdate(
+                players, players_size,
+                dead_bodies, &dead_bodies_size,
+                curr_time,
+                apple_spawner.apples, apple_spawner.apples_size
+            );
+            
+            if (curr_time - apple_spawner.last_spawn_frame > apple_spawner.spawn_delay) {
+                apple_spawner.last_spawn_frame = curr_time;
+                appleInit(&apple_spawner.apples[apple_spawner.apples_size++]);
+            } 
 
             // =============
             // Render
@@ -820,16 +908,34 @@ int main() {
             SDL_Rect grid_rect = {.x = GRID_X0, .y = GRID_Y0, .w = GRID_DIMENS, .h = GRID_DIMENS};
             SDL_RenderFillRect(renderer, &grid_rect);
 
-            // Body
-            for (size_t i = 0; i < players_size; i++) {
-                playerRenderBody(&players[i]);
-            }
-
             // Apple
             SDL_SetRenderDrawColor(renderer, 0xFF, 0, 0, 255);
             for (size_t i = 0; i < apple_spawner.apples_size; i++) {
+                switch (apple_spawner.apples[i].type) {
+                case NONE: {
+                    SDL_SetRenderDrawColor(renderer, 0xFF, 0, 0, 255);
+                } break;
+                case ZOMBIE: {
+                    SDL_SetRenderDrawColor(renderer, 0x00, 0xFF, 0, 255);
+                } break;
+                case SONIC: {
+                    SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0xFF, 255);
+                } break;
+                }
+
                 SDL_Rect apple_rect = posToRect(&apple_spawner.apples[i].pos);
                 SDL_RenderFillRect(renderer, &apple_rect);
+            }
+    
+            for (size_t i = 0; i < dead_bodies_size; i++) {
+                SDL_SetRenderDrawColor(renderer, 0x02, 0x30, 0x20, 0xFF);
+                SDL_Rect rect = posToRect(&dead_bodies[i]);
+                SDL_RenderFillRect(renderer, &rect);
+            }
+
+            // Body
+            for (size_t i = 0; i < players_size; i++) {
+                playerRenderBody(&players[i]);
             }
 
             // Snake Head
