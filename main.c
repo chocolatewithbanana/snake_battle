@@ -561,6 +561,7 @@ int main() {
 
     enum Mode mode = MENU;
 
+    // Init game structs
     struct AppleSpawner apple_spawner;
     struct Player players[MAX_PLAYERS_SIZE];
     size_t players_size = 1;
@@ -570,6 +571,7 @@ int main() {
 
     reset(&apple_spawner, players, MAX_PLAYERS_SIZE, dead_bodies, &dead_bodies_size);
 
+    // Set initial bindings
     SDL_Keycode bindings[MAX_PLAYERS_SIZE][4] = {
         {SDLK_s, SDLK_a, SDLK_d, SDLK_w},
         {SDLK_DOWN, SDLK_LEFT, SDLK_RIGHT, SDLK_UP},
@@ -581,19 +583,31 @@ int main() {
         memcpy(&players[i].bindings, bindings[i], sizeof(SDL_Keycode)*4);
     }
 
-
-    uint32_t game_over_delay = 1000;
-    uint32_t game_over_start;
-
     bool already_running = false;
 
-    SDL_Color button_released_color = {0xFF, 0x00, 0x00, 0xFF};
-    SDL_Color button_pressed_color = {0x00, 0xFF, 0x00, 0xFF};
+    struct GameOver {
+        uint32_t delay;
+        uint32_t start;
+    } game_over = {
+        .delay = 1000,
+    };
 
-    bool remap_button_sel = false;
-    size_t remap_button_sel_i; 
+    struct Menu {
+        SDL_Color button_color;
+    } menu = {
+        .button_color = {0xFF, 0x00, 0x00, 0xFF},
+    };
 
-    size_t sel_player_i = 0;
+    struct RemapMenu {
+        SDL_Color button_sel_color;
+        bool button_sel;
+        size_t button_sel_i;
+        size_t sel_player_i;
+    } remap_menu = {
+        .button_sel_color = {0x00, 0xFF, 0x00, 0xFF},
+        .button_sel = false,
+        .sel_player_i = 0,
+    };
 
     while (true) {
         uint32_t curr_time = SDL_GetTicks();
@@ -620,9 +634,9 @@ int main() {
             }
 
             SDL_Color colors[MENU_BUTTONS_SIZE] = {
-                button_released_color,
-                button_released_color,   
-                button_released_color   
+                menu.button_color,
+                menu.button_color,
+                menu.button_color, 
             };
 
             SDL_Rect hitbox[MENU_BUTTONS_SIZE];
@@ -675,13 +689,13 @@ int main() {
             {
                 char msg[9] = "Player 0";
 
-                msg[7] = sel_player_i + 1 + '0';
+                msg[7] = remap_menu.sel_player_i + 1 + '0';
 
                 sel_player_hitbox.x = 0;
                 sel_player_hitbox.y = 0;
                 TTF_SizeText(font, msg, &sel_player_hitbox.w, &sel_player_hitbox.h);
 
-                renderMsg(msg, &sel_player_hitbox, button_released_color);
+                renderMsg(msg, &sel_player_hitbox, menu.button_color);
             }
 
             // ===================
@@ -707,7 +721,7 @@ int main() {
                 for (size_t i = 0; i < REMAP_MENU_BUTTONS_SIZE; i++) {
                     size_t len = strlen(msg[i]);
 
-                    SDL_Keycode key = players[sel_player_i].bindings[i];
+                    SDL_Keycode key = players[remap_menu.sel_player_i].bindings[i];
                     
                     if (key <= 0x7F) {
                         msg[i][len-1] = (char)key;
@@ -735,13 +749,13 @@ int main() {
                 }
 
                 SDL_Color colors[REMAP_MENU_BUTTONS_SIZE] = {
-                    button_released_color,
-                    button_released_color,
-                    button_released_color,
-                    button_released_color
+                    menu.button_color,
+                    menu.button_color,
+                    menu.button_color,
+                    menu.button_color,
                 };
 
-                if (remap_button_sel) colors[remap_button_sel_i] = button_pressed_color;
+                if (remap_menu.button_sel) colors[remap_menu.button_sel_i] = remap_menu.button_sel_color;
 
                 renderMsgsCentered(p_msg, REMAP_MENU_BUTTONS_SIZE, hitbox, colors);
             }
@@ -756,29 +770,29 @@ int main() {
                     if (event.key.keysym.sym == SDLK_ESCAPE) {
                         mode = OPTIONS_MENU;
                     }
-                    if (remap_button_sel) {
-                        remap_button_sel = false;
-                        players[sel_player_i].bindings[remap_button_sel_i] = event.key.keysym.sym;
+                    if (remap_menu.button_sel) {
+                        remap_menu.button_sel = false;
+                        players[remap_menu.sel_player_i].bindings[remap_menu.button_sel_i] = event.key.keysym.sym;
                     }
                 } break;
                 case SDL_MOUSEBUTTONDOWN: {
                     struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
                     bool pressed_button = false;
                     for (size_t i = 0; i < REMAP_MENU_BUTTONS_SIZE; i++) {
-                        if (!remap_button_sel && rectContainsPos(&hitbox[i], &mouse_pos)) {
+                        if (!remap_menu.button_sel && rectContainsPos(&hitbox[i], &mouse_pos)) {
                             pressed_button = true;
-                            remap_button_sel = true;
-                            remap_button_sel_i = i;
+                            remap_menu.button_sel = true;
+                            remap_menu.button_sel_i = i;
                         } 
                     }
                     if (!pressed_button) {
-                        remap_button_sel = false;
+                        remap_menu.button_sel = false;
                     }
 
                     if (rectContainsPos(&sel_player_hitbox, &mouse_pos)) {
-                        sel_player_i++;
-                        if (sel_player_i >= players_size) {
-                            sel_player_i = 0;
+                        remap_menu.sel_player_i++;
+                        if (remap_menu.sel_player_i >= players_size) {
+                            remap_menu.sel_player_i = 0;
                         }
                     }
                 } break;
@@ -818,8 +832,8 @@ int main() {
             }
 
             SDL_Color colors[OPTIONS_MENU_BUTTONS_SIZE] = {
-                button_released_color,
-                button_released_color
+                menu.button_color,
+                menu.button_color,
             };
 
             renderMsgsCentered(p_msg, OPTIONS_MENU_BUTTONS_SIZE, hitbox, colors);
@@ -834,9 +848,9 @@ int main() {
                     if (event.key.keysym.sym == SDLK_ESCAPE) {
                         mode = MENU;
                     }
-                    if (remap_button_sel) {
-                        remap_button_sel = false;
-                        players[sel_player_i].bindings[remap_button_sel_i] = event.key.keysym.sym;
+                    if (remap_menu.button_sel) {
+                        remap_menu.button_sel = false;
+                        players[remap_menu.sel_player_i].bindings[remap_menu.button_sel_i] = event.key.keysym.sym;
                     }
                 } break;
                 case SDL_MOUSEBUTTONDOWN: {
@@ -862,7 +876,7 @@ int main() {
 
             if (all_died) {
                 mode = GAME_OVER;
-                game_over_start = curr_time;
+                game_over.start = curr_time;
                 already_running = false;
             }
 
@@ -970,7 +984,7 @@ int main() {
                 }
             }
 
-            if (curr_time - game_over_start > game_over_delay) {
+            if (curr_time - game_over.start > game_over.delay) {
                 mode = MENU;
                 reset(&apple_spawner, players, MAX_PLAYERS_SIZE, dead_bodies, &dead_bodies_size);
             }
