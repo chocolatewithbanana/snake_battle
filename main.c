@@ -508,7 +508,11 @@ enum Mode {
     GAME_OVER
 };
 
-void reset(struct AppleSpawner* p_apple_spawner, struct Player* players, size_t players_size) {
+void reset(
+    struct AppleSpawner* p_apple_spawner, 
+    struct Player* players, size_t players_size,
+    struct Pos* dead_bodies, size_t* dead_bodies_size
+) {
     appleSpawnerInit(p_apple_spawner);
     for (size_t i = 0; i < players_size; i++) {
         playerInit(&players[i]);
@@ -532,6 +536,8 @@ void reset(struct AppleSpawner* p_apple_spawner, struct Player* players, size_t 
         players[i].pos = init_pos[i];
         players[i].direc = init_direc[i];
     }
+
+    *dead_bodies_size = 0;
 }
 
 
@@ -559,7 +565,10 @@ int main() {
     struct Player players[MAX_PLAYERS_SIZE];
     size_t players_size = 1;
 
-    reset(&apple_spawner, players, MAX_PLAYERS_SIZE);
+    struct Pos dead_bodies[DEAD_BODIES_SIZE] = {0};
+    size_t dead_bodies_size = 0;
+
+    reset(&apple_spawner, players, MAX_PLAYERS_SIZE, dead_bodies, &dead_bodies_size);
 
     SDL_Keycode bindings[MAX_PLAYERS_SIZE][4] = {
         {SDLK_s, SDLK_a, SDLK_d, SDLK_w},
@@ -572,8 +581,6 @@ int main() {
         memcpy(&players[i].bindings, bindings[i], sizeof(SDL_Keycode)*4);
     }
 
-    struct Pos dead_bodies[DEAD_BODIES_SIZE] = {0};
-    size_t dead_bodies_size = 0;
 
     uint32_t game_over_delay = 1000;
     uint32_t game_over_start;
@@ -965,7 +972,7 @@ int main() {
 
             if (curr_time - game_over_start > game_over_delay) {
                 mode = MENU;
-                reset(&apple_spawner, players, MAX_PLAYERS_SIZE);
+                reset(&apple_spawner, players, MAX_PLAYERS_SIZE, dead_bodies, &dead_bodies_size);
             }
 
             SDL_Color font_color = {0xFF, 0x00, 0, 255};
