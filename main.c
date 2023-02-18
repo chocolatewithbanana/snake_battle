@@ -140,8 +140,8 @@ void appleInit(struct Apple* p_apple) {
 
     int odds[POWERUP_SIZE];
     odds[NONE] = 20; 
-    odds[ZOMBIE] = 1;
-    odds[SONIC] = 2;
+    odds[ZOMBIE] = 20;
+    odds[SONIC] = 20;
 
     int total = 0;
     for (size_t i = 0; i < POWERUP_SIZE; i++) {
@@ -250,150 +250,156 @@ void playerOnInput(struct Player* p_player, SDL_Keycode key) {
     }
 }
 
+/*
+ * All players must move their heads and bodies before checking collision
+ * */
 void playersUpdate(
     struct Player* players, size_t players_size,
     struct Pos* dead_bodies, size_t *dead_bodies_size,
     uint32_t curr_time,
     struct Apple* apples, size_t apples_size
 ) {
-    // move
-    struct Pos last_tail_pos[MAX_PLAYERS_SIZE];
+    bool move[MAX_PLAYERS_SIZE];
+
+    // Check if player will move
     for (size_t i = 0; i < players_size; i++) {
-        if (players[i].game_over) continue;
+        if (players[i].game_over) {
+            move[i] = false;
+            continue;
+        }
 
-        struct Player* p_player = &players[i];
-
-        // speed
-        uint32_t movem_delay = p_player->movem_delay;
-        if (curr_time < p_player->sonic_start + p_player->sonic_duration) {
+        uint32_t movem_delay = players[i].movem_delay;
+        if (curr_time < players[i].sonic_start + players[i].sonic_duration) {
             movem_delay /= 2;
         }
 
-        if (curr_time - p_player->last_movem_frame > movem_delay) {
-            p_player->last_movem_frame = curr_time;
-            p_player->reset_buffer_on_input = true;
-
-            struct Pos last_pos = p_player->pos;
-            if (p_player->body_size > 0) {
-                last_tail_pos[i] = p_player->body[p_player->body_size-1];
-            } else {
-                last_tail_pos[i] = last_pos;
-            }
-
-            // move head
-            if (p_player->direc_i < p_player->direc_size) {
-                p_player->direc = p_player->direc_buff[p_player->direc_i++];
-            }
-
-            switch (p_player->direc) {
-            case DOWN:
-                p_player->pos.y++;
-            break;
-            case LEFT:
-                p_player->pos.x--;
-            break;
-            case RIGHT:
-                p_player->pos.x++;
-            break;
-            case UP:
-                p_player->pos.y--;
-            break;
-            }
-
-            if (p_player->pos.x < 0) {
-                p_player->pos.x = GRID_SIZE-1;
-            } else if (p_player->pos.x >= GRID_SIZE) {
-                p_player->pos.x = 0;
-            }
-
-            if (p_player->pos.y < 0) {
-                p_player->pos.y = GRID_SIZE-1;
-            } else if (p_player->pos.y >= GRID_SIZE) {
-                p_player->pos.y = 0;
-            }
-
-            // move body
-            if (p_player->body_size > 0) {
-                for (size_t i = p_player->body_size-1; i > 0; i--) {
-                    p_player->body[i] = p_player->body[i-1]; 
-                }
-                p_player->body[0] = last_pos;
-            }
-
-            // zombie
-            if (curr_time < p_player->zombie_start + p_player->zombie_duration) {
-                if (players[i].body_size > 0) {
-                    dead_bodies[(*dead_bodies_size)++] = last_tail_pos[i];
-
-                    players[i].body_size--;
-                }
-            }
+        if (curr_time - players[i].last_movem_frame > movem_delay) {
+            move[i] = true;  
         }
     }
 
-    // check apples
+    // Move heads
+    struct Pos last_pos[MAX_PLAYERS_SIZE];
     for (size_t i = 0; i < players_size; i++) {
-        struct Player* p_player = &players[i];
+        if (players[i].game_over || !move[i]) continue;
 
-        if (p_player->game_over) continue;
+        players[i].last_movem_frame = curr_time;
+        players[i].reset_buffer_on_input = true;
 
-        for (size_t j = 0; j < apples_size; j++) {
-            if (p_player->pos.x == apples[j].pos.x
-                    && p_player->pos.y == apples[j].pos.y) {
-                p_player->score++;
+        // Store last position
+        last_pos[i] = players[i].pos;
 
-                switch (apples[j].type) {
+        // Check input in buffer
+        if (players[i].direc_i < players[i].direc_size) {
+            players[i].direc = players[i].direc_buff[players[i].direc_i++];
+        }
+
+        // Move
+        switch (players[i].direc) {
+        case DOWN:
+            players[i].pos.y++;
+        break;
+        case LEFT:
+            players[i].pos.x--;
+        break;
+        case RIGHT:
+            players[i].pos.x++;
+        break;
+        case UP:
+            players[i].pos.y--;
+        break;
+        }
+
+        // Wraparound
+        if (players[i].pos.x < 0) {
+            players[i].pos.x = GRID_SIZE-1;
+        } else if (players[i].pos.x >= GRID_SIZE) {
+            players[i].pos.x = 0;
+        }
+
+        if (players[i].pos.y < 0) {
+            players[i].pos.y = GRID_SIZE-1;
+        } else if (players[i].pos.y >= GRID_SIZE) {
+            players[i].pos.y = 0;
+        }
+    }
+
+    // Check apples
+    for (size_t p_i = 0; p_i < players_size; p_i++) {
+        if (players[p_i].game_over) continue;
+
+        for (size_t a_i = 0; a_i < apples_size; a_i++) {
+            if (players[p_i].pos.x == apples[a_i].pos.x
+                    && players[p_i].pos.y == apples[a_i].pos.y) {
+                players[p_i].score++;
+
+                switch (apples[a_i].type) {
                 case NONE: {
                 } break;
                 case ZOMBIE: {
                     printf("zombie\n");
-                    p_player->zombie_start = curr_time;
+                    players[p_i].zombie_start = curr_time;
                 } break;
                 case SONIC: {
                     printf("sonic\n");
-                    p_player->sonic_start = curr_time;
+                    players[p_i].sonic_start = curr_time;
                 } break;
                 }
                 
-                appleInit(&apples[j]);
+                appleInit(&apples[a_i]);
 
-                p_player->body_size++; 
-                p_player->body[p_player->body_size-1] = last_tail_pos[i];
-
+                players[p_i].body_size++; 
             }
         }
     }
 
+    // Move body and zombie
+    for (size_t p_i = 0; p_i < players_size; p_i++) {
+        if (players[p_i].game_over || !move[p_i]) continue;
     
+        // Move body
+        if (players[p_i].body_size > 0) {
+            for (size_t b_i = players[p_i].body_size-1; b_i > 0; b_i--) {
+                players[p_i].body[b_i] = players[p_i].body[b_i-1]; 
+            }
+            players[p_i].body[0] = last_pos[p_i];
+        }
 
-    // check colision
-    for (size_t i = 0; i < players_size; i++) {
-        struct Player* p_this = &players[i];
+        // Add zombie dead body
+        if (curr_time < players[p_i].zombie_start + players[p_i].zombie_duration) {
+            if (players[p_i].body_size > 0) {
+                dead_bodies[*dead_bodies_size] = players[p_i].body[players[p_i].body_size-1];
 
-        if (p_this->game_over) continue;
+                (*dead_bodies_size)++;
+                players[p_i].body_size--;
+            }
+        }
+    }
 
-        for (size_t j = 0; j < players_size; j++) {
-            struct Player* p_other = &players[j];
+    // Check colision
+    for (size_t this_i = 0; this_i < players_size; this_i++) {
+        if (players[this_i].game_over) continue;
 
-            if (p_this != p_other 
-                    && p_this->pos.x == p_other->pos.x 
-                    && p_this->pos.y == p_other->pos.y) {
-                p_this->game_over = true;
+        for (size_t other_i = 0; other_i < players_size; other_i++) {
+            if (this_i != other_i
+                    && players[this_i].pos.x == players[other_i].pos.x 
+                    && players[this_i].pos.y == players[other_i].pos.y) {
+                players[this_i].game_over = true;
             }
 
-            for (size_t k = 0; k < p_other->body_size; k++) {
-                struct Pos* p_body = &p_other->body[k];
+            for (size_t k = 0; k < players[other_i].body_size; k++) {
+                struct Pos* p_body = &players[other_i].body[k];
                 
-                if (p_this->pos.x == p_body->x && p_this->pos.y == p_body->y) {
-                    p_this->game_over = true;
+                if (players[this_i].pos.x == p_body->x && players[this_i].pos.y == p_body->y) {
+                    players[this_i].game_over = true;
                 }    
             }
         }
 
-        for (size_t j = 0; j < *dead_bodies_size; j++) {
-            if (players[i].pos.x == dead_bodies[j].x
-                && players[i].pos.y == dead_bodies[j].y) {
-                players[i].game_over = true;
+        for (size_t d_i = 0; d_i < *dead_bodies_size; d_i++) {
+            if (players[this_i].pos.x == dead_bodies[d_i].x
+                && players[this_i].pos.y == dead_bodies[d_i].y) {
+                players[this_i].game_over = true;
             }
         }
     }
@@ -560,7 +566,6 @@ int main() {
         goto cleanup;
     }
 
-
     // Init game structs
     struct AppleSpawner apple_spawner;
     struct Player players[MAX_PLAYERS_SIZE];
@@ -585,6 +590,15 @@ int main() {
 
     enum Mode mode = CHOOSE_NETWORK;
     bool already_running = false;
+
+    enum NetworkOptions {
+        NO_LOCAL,
+        NO_ONLINE,
+    };
+
+    struct ChooseNetwork {
+        enum NetworkOptions option; 
+    } choose_network;
 
     struct GameOver {
         uint32_t delay;
