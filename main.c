@@ -139,9 +139,9 @@ void appleInit(struct Apple* p_apple) {
     p_apple->pos.y = rand() % GRID_SIZE;
 
     int odds[POWERUP_SIZE];
-    odds[NONE] = 20; 
-    odds[ZOMBIE] = 20;
-    odds[SONIC] = 20;
+    odds[NONE] = 10; 
+    odds[ZOMBIE] = 1;
+    odds[SONIC] = 1;
 
     int total = 0;
     for (size_t i = 0; i < POWERUP_SIZE; i++) {
