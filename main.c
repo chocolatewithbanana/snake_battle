@@ -264,12 +264,12 @@ void playerOnInput(struct Player* p_player, SDL_Keycode key) {
  * All players must move their heads and bodies before checking collision
  * */
 void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
-    bool move[MAX_PLAYERS_SIZE];
+    // Initialize to false
+    bool move[MAX_PLAYERS_SIZE] = {0};
 
     // Check if player will move
     for (size_t i = 0; i < game_state->players_size; i++) {
         if (game_state->players[i].game_over) {
-            move[i] = false;
             continue;
         }
 
@@ -342,11 +342,9 @@ void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
                 case NONE: {
                 } break;
                 case ZOMBIE: {
-                    printf("zombie\n");
                     game_state->players[p_i].zombie_start = curr_time;
                 } break;
                 case SONIC: {
-                    printf("sonic\n");
                     game_state->players[p_i].sonic_start = curr_time;
                 } break;
                 }
@@ -408,6 +406,12 @@ void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
             }
         }
     }
+
+    // Spawn apples
+    if (curr_time - game_state->apple_spawner.last_spawn_frame > game_state->apple_spawner.spawn_delay) {
+        game_state->apple_spawner.last_spawn_frame = curr_time;
+        appleInit(&game_state->apple_spawner.apples[game_state->apple_spawner.apples_size++]);
+    } 
 }
 
 void renderMsg(char* msg, SDL_Rect* hitbox, SDL_Color color) {
@@ -522,7 +526,7 @@ enum Mode {
 
 void reset(struct GameState* game_state) {
     appleSpawnerInit(&game_state->apple_spawner);
-    for (size_t i = 0; i < game_state->players_size; i++) {
+    for (size_t i = 0; i < MAX_PLAYERS_SIZE; i++) {
         playerInit(&game_state->players[i]);
     }
 
@@ -540,7 +544,7 @@ void reset(struct GameState* game_state) {
         LEFT  
     };
 
-    for (size_t i = 0; i < game_state->players_size; i++) {
+    for (size_t i = 0; i < MAX_PLAYERS_SIZE; i++) {
         game_state->players[i].pos = init_pos[i];
         game_state->players[i].direc = init_direc[i];
     }
@@ -554,6 +558,56 @@ bool rectContainsPos(SDL_Rect* rect, struct Pos* pos) {
         && pos->x < rect->x + rect->w
         && pos->y > rect->y
         && pos->y < rect->y + rect->h;
+}
+
+void render(struct GameState* game_state) {
+    // Background
+    SDL_SetRenderDrawColor(renderer, 0x3C, 0xDF, 0xFF, 255);
+    SDL_RenderClear(renderer);
+
+    // Grid
+    SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 255);
+    SDL_Rect grid_rect = {.x = GRID_X0, .y = GRID_Y0, .w = GRID_DIMENS, .h = GRID_DIMENS};
+    SDL_RenderFillRect(renderer, &grid_rect);
+
+    // Apple
+    SDL_SetRenderDrawColor(renderer, 0xFF, 0, 0, 255);
+    for (size_t i = 0; i < game_state->apple_spawner.apples_size; i++) {
+        switch (game_state->apple_spawner.apples[i].type) {
+        case NONE: {
+            SDL_SetRenderDrawColor(renderer, 0xFF, 0, 0, 255);
+        } break;
+        case ZOMBIE: {
+            SDL_SetRenderDrawColor(renderer, 0x00, 0xFF, 0, 255);
+        } break;
+        case SONIC: {
+            SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0xFF, 255);
+        } break;
+        }
+
+        SDL_Rect apple_rect = posToRect(&game_state->apple_spawner.apples[i].pos);
+        SDL_RenderFillRect(renderer, &apple_rect);
+    }
+
+    // Dead bodies
+    for (size_t i = 0; i < game_state->dead_bodies_size; i++) {
+        SDL_SetRenderDrawColor(renderer, 0x02, 0x30, 0x20, 0xFF);
+        SDL_Rect rect = posToRect(&game_state->dead_bodies[i]);
+        SDL_RenderFillRect(renderer, &rect);
+    }
+
+    // Body
+    for (size_t i = 0; i < game_state->players_size; i++) {
+        playerRenderBody(&game_state->players[i]);
+    }
+
+    // Snake Head
+    for (size_t i = 0; i < game_state->players_size; i++) {
+        playerRenderHead(&game_state->players[i]);
+    }
+
+    // Score
+    renderPlayersScore(game_state->players, game_state->players_size);
 }
 
 int main() {
@@ -693,7 +747,7 @@ int main() {
         } break;
         case MENU: {
 
-#define MENU_BUTTONS_SIZE 2
+#define MENU_BUTTONS_SIZE 3
 
             // clean screen
             SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
@@ -701,20 +755,21 @@ int main() {
 
             // draw buttons
             enum Button {
-                START,
-                OPTIONS,
+                M_START,
+                M_OPTIONS,
+                M_BACK
             };
 
-            char* msg[MENU_BUTTONS_SIZE] = {"Start", "Options",};
+            char* msg[MENU_BUTTONS_SIZE] = {"Start", "Options", "Back"};
 
             if (already_running) {
                 msg[0] = "Continue";
             }
 
-            SDL_Color colors[MENU_BUTTONS_SIZE] = {
-                menu.button_color,
-                menu.button_color,
-            };
+            SDL_Color colors[MENU_BUTTONS_SIZE]; 
+            for (size_t i = 0; i < MENU_BUTTONS_SIZE; i++) {
+                colors[i] = menu.button_color;                
+            }
 
             SDL_Rect hitbox[MENU_BUTTONS_SIZE];
             renderMsgsCentered(msg, MENU_BUTTONS_SIZE, hitbox, colors);
@@ -742,12 +797,17 @@ int main() {
                         struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
                         if (rectContainsPos(&hitbox[i], &mouse_pos)) {
                             switch ((enum Button)i) {
-                            case START: {
+                            case M_START: {
                                 mode = RUNNING;
                                 already_running = true;
                             } break;
-                            case OPTIONS: {
+                            case M_OPTIONS: {
                                 mode = OPTIONS_MENU;
+                            } break;
+                            case M_BACK: {
+                                mode = CHOOSE_NETWORK;
+                                reset(&game_state);
+                                already_running = false;
                             } break;
                             }
                         }
@@ -980,72 +1040,17 @@ int main() {
                 }
             }
 
-            // =============
             // Update
-            // =============
             gameStateUpdate(&game_state, curr_time);
-            
-            if (curr_time - game_state.apple_spawner.last_spawn_frame > game_state.apple_spawner.spawn_delay) {
-                game_state.apple_spawner.last_spawn_frame = curr_time;
-                appleInit(&game_state.apple_spawner.apples[game_state.apple_spawner.apples_size++]);
-            } 
 
-            // =============
             // Render
-            // =============
-            // Background
-            SDL_SetRenderDrawColor(renderer, 0x3C, 0xDF, 0xFF, 255);
-            SDL_RenderClear(renderer);
-
-            // Grid
-            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 255);
-            SDL_Rect grid_rect = {.x = GRID_X0, .y = GRID_Y0, .w = GRID_DIMENS, .h = GRID_DIMENS};
-            SDL_RenderFillRect(renderer, &grid_rect);
-
-            // Apple
-            SDL_SetRenderDrawColor(renderer, 0xFF, 0, 0, 255);
-            for (size_t i = 0; i < game_state.apple_spawner.apples_size; i++) {
-                switch (game_state.apple_spawner.apples[i].type) {
-                case NONE: {
-                    SDL_SetRenderDrawColor(renderer, 0xFF, 0, 0, 255);
-                } break;
-                case ZOMBIE: {
-                    SDL_SetRenderDrawColor(renderer, 0x00, 0xFF, 0, 255);
-                } break;
-                case SONIC: {
-                    SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0xFF, 255);
-                } break;
-                }
-
-                SDL_Rect apple_rect = posToRect(&game_state.apple_spawner.apples[i].pos);
-                SDL_RenderFillRect(renderer, &apple_rect);
-            }
-    
-            for (size_t i = 0; i < game_state.dead_bodies_size; i++) {
-                SDL_SetRenderDrawColor(renderer, 0x02, 0x30, 0x20, 0xFF);
-                SDL_Rect rect = posToRect(&game_state.dead_bodies[i]);
-                SDL_RenderFillRect(renderer, &rect);
-            }
-
-            // Body
-            for (size_t i = 0; i < game_state.players_size; i++) {
-                playerRenderBody(&game_state.players[i]);
-            }
-
-            // Snake Head
-            for (size_t i = 0; i < game_state.players_size; i++) {
-                playerRenderHead(&game_state.players[i]);
-            }
-
-            // Score
             for (size_t i = 0; i < game_state.players_size; i++) {
                 if (game_state.players[i].score > 999) {
                     fprintf(stderr, "Score too big!\n");
                     goto cleanup_media;
                 }
             }
-
-            renderPlayersScore(game_state.players, game_state.players_size);
+            render(&game_state);
         } break;
         case GAME_OVER: {
             SDL_Event event;
