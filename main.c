@@ -194,10 +194,10 @@ struct Player {
     int direc_i;
     bool reset_buffer_on_input;
 
-    uint32_t zombie_start;
+    uint32_t zombie_end;
     uint32_t zombie_duration;
 
-    uint32_t sonic_start;
+    uint32_t sonic_end;
     uint32_t sonic_duration;
 
     SDL_Keycode bindings[4];
@@ -220,10 +220,10 @@ void playerInit(struct Player* p_player) {
     p_player->direc_i = 0;
     p_player->reset_buffer_on_input = true;
 
-    p_player->zombie_start = 0;
+    p_player->zombie_end = 0;
     p_player->zombie_duration = 3000;
 
-    p_player->sonic_start = 0;
+    p_player->sonic_end = 0;
     p_player->sonic_duration = 3000;
 }
 
@@ -274,7 +274,7 @@ void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
         }
 
         uint32_t movem_delay = game_state->players[i].movem_delay;
-        if (curr_time < game_state->players[i].sonic_start + game_state->players[i].sonic_duration) {
+        if (curr_time < game_state->players[i].sonic_end) {
             movem_delay /= 2;
         }
 
@@ -342,10 +342,10 @@ void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
                 case NONE: {
                 } break;
                 case ZOMBIE: {
-                    game_state->players[p_i].zombie_start = curr_time;
+                    game_state->players[p_i].zombie_end = curr_time + game_state->players[p_i].zombie_duration;
                 } break;
                 case SONIC: {
-                    game_state->players[p_i].sonic_start = curr_time;
+                    game_state->players[p_i].sonic_end = curr_time + game_state->players[p_i].sonic_duration;
                 } break;
                 }
                 
@@ -369,7 +369,7 @@ void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
         }
 
         // Add zombie dead body
-        if (curr_time < game_state->players[p_i].zombie_start + game_state->players[p_i].zombie_duration) {
+        if (curr_time < game_state->players[p_i].zombie_end) {
             if (game_state->players[p_i].body_size > 0) {
                 game_state->dead_bodies[game_state->dead_bodies_size] = game_state->players[p_i].body[game_state->players[p_i].body_size-1];
 
@@ -732,14 +732,6 @@ int main() {
                             }  
                         } 
                     }
-
-                    if (rectContainsPos(&hitbox[0], &mouse_pos)) {
-                        mode = MENU;
-                    } else if (rectContainsPos(&hitbox[1], &mouse_pos)) {
-                        // @todo
-                    } else if (rectContainsPos(&hitbox[2], &mouse_pos)) {
-                        goto cleanup_media;
-                    }
                 } break;
                 }
             }
@@ -820,9 +812,7 @@ int main() {
             SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
             SDL_RenderClear(renderer);
 
-            // =====================
             // Select player button
-            // =====================
             SDL_Rect sel_player_hitbox;
             {
                 char msg[9] = "Player 0";
@@ -836,9 +826,7 @@ int main() {
                 renderMsg(msg, &sel_player_hitbox, menu.button_color);
             }
 
-            // ===================
             // Centered buttons
-            // ===================
 #define REMAP_MENU_BUTTONS_SIZE 4
 
             SDL_Rect hitbox[REMAP_MENU_BUTTONS_SIZE];
