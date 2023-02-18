@@ -501,6 +501,7 @@ void renderPlayersScore(struct Player* players, size_t players_size) {
 }
 
 enum Mode {
+    CHOOSE_NETWORK,
     MENU,
     REMAP_MENU,
     OPTIONS_MENU,
@@ -559,7 +560,6 @@ int main() {
         goto cleanup;
     }
 
-    enum Mode mode = MENU;
 
     // Init game structs
     struct AppleSpawner apple_spawner;
@@ -583,6 +583,7 @@ int main() {
         memcpy(&players[i].bindings, bindings[i], sizeof(SDL_Keycode)*4);
     }
 
+    enum Mode mode = CHOOSE_NETWORK;
     bool already_running = false;
 
     struct GameOver {
@@ -609,12 +610,77 @@ int main() {
         .sel_player_i = 0,
     };
 
+    // Main switch
     while (true) {
         uint32_t curr_time = SDL_GetTicks();
         switch (mode) {
+        case CHOOSE_NETWORK: {
+            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
+            SDL_RenderClear(renderer);
+
+#define CHOOSE_NETWORK_MSGS_SIZE 3
+
+            char* msg[CHOOSE_NETWORK_MSGS_SIZE] = {
+                "Local",
+                "Online",
+                "Quit",
+            };
+
+            enum CHOOSE_NETWORK_OPTIONS {
+                CN_LOCAL,
+                CN_ONLINE,
+                CN_QUIT,
+            };
+
+            SDL_Rect hitbox[CHOOSE_NETWORK_MSGS_SIZE];
+
+            SDL_Color color[CHOOSE_NETWORK_MSGS_SIZE];
+            for (size_t i = 0; i < CHOOSE_NETWORK_MSGS_SIZE; i++) {
+                color[i] = menu.button_color;
+            }
+
+            renderMsgsCentered(msg, CHOOSE_NETWORK_MSGS_SIZE, hitbox, color);
+
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                switch (event.type) {
+                case SDL_QUIT: {
+                    goto cleanup_media;
+                } break;
+                case SDL_MOUSEBUTTONDOWN: {
+                    struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
+
+                    for (size_t i = 0; i < CHOOSE_NETWORK_MSGS_SIZE; i++) {
+                        if (rectContainsPos(&hitbox[i], &mouse_pos)) {
+                            switch ((enum CHOOSE_NETWORK_OPTIONS)i) {
+                            case CN_LOCAL: {
+                                mode = MENU;
+                            } break; 
+                            case CN_ONLINE: {
+                                // @todo
+                            } break;
+                            case CN_QUIT: {
+                                goto cleanup_media;
+                            } break;
+                            }  
+                        } 
+                    }
+
+                    if (rectContainsPos(&hitbox[0], &mouse_pos)) {
+                        mode = MENU;
+                    } else if (rectContainsPos(&hitbox[1], &mouse_pos)) {
+                        // @todo
+                    } else if (rectContainsPos(&hitbox[2], &mouse_pos)) {
+                        goto cleanup_media;
+                    }
+                } break;
+                }
+            }
+
+        } break;
         case MENU: {
 
-#define MENU_BUTTONS_SIZE 3
+#define MENU_BUTTONS_SIZE 2
 
             // clean screen
             SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
@@ -624,10 +690,9 @@ int main() {
             enum Button {
                 START,
                 OPTIONS,
-                QUIT
             };
 
-            char* msg[MENU_BUTTONS_SIZE] = {"Start", "Options", "Quit"};
+            char* msg[MENU_BUTTONS_SIZE] = {"Start", "Options",};
 
             if (already_running) {
                 msg[0] = "Continue";
@@ -636,7 +701,6 @@ int main() {
             SDL_Color colors[MENU_BUTTONS_SIZE] = {
                 menu.button_color,
                 menu.button_color,
-                menu.button_color, 
             };
 
             SDL_Rect hitbox[MENU_BUTTONS_SIZE];
@@ -652,7 +716,11 @@ int main() {
                 case SDL_KEYDOWN: {
                     switch (event.key.keysym.sym) {
                     case SDLK_ESCAPE: {
-                        mode = RUNNING;
+                        if (already_running) {
+                            mode = RUNNING;
+                        } else {
+                            mode = CHOOSE_NETWORK;
+                        }
                     } break;
                     }
                 } break;
@@ -667,9 +735,6 @@ int main() {
                             } break;
                             case OPTIONS: {
                                 mode = OPTIONS_MENU;
-                            } break;
-                            case QUIT: {
-                                goto cleanup_media;
                             } break;
                             }
                         }
