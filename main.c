@@ -5,6 +5,16 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <inttypes.h>
+
+#ifdef __linux__
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#endif
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
@@ -235,7 +245,6 @@ struct GameState {
     struct Pos dead_bodies[DEAD_BODIES_SIZE];
     size_t dead_bodies_size;
 };
-
 
 void playerOnInput(struct Player* p_player, SDL_Keycode key) {
     enum Direction direc;
@@ -517,6 +526,8 @@ void renderPlayersScore(struct Player* players, size_t players_size) {
 
 enum Mode {
     CHOOSE_NETWORK,
+    HOST_OR_JOIN,
+    LOBBY,
     MENU,
     REMAP_MENU,
     OPTIONS_MENU,
@@ -558,6 +569,11 @@ bool rectContainsPos(SDL_Rect* rect, struct Pos* pos) {
         && pos->x < rect->x + rect->w
         && pos->y > rect->y
         && pos->y < rect->y + rect->h;
+}
+
+void clearScreen() {
+    SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
+    SDL_RenderClear(renderer);
 }
 
 void render(struct GameState* game_state) {
@@ -644,6 +660,7 @@ int main() {
     enum Mode mode = CHOOSE_NETWORK;
     bool already_running = false;
 
+    // @todo delete NetworkOptions and ChooseNetwork?
     enum NetworkOptions {
         NO_LOCAL,
         NO_ONLINE,
@@ -651,13 +668,21 @@ int main() {
 
     struct ChooseNetwork {
         enum NetworkOptions option; 
-    } choose_network;
+    };
 
     struct GameOver {
         uint32_t delay;
         uint32_t start;
     } game_over = {
         .delay = 1000,
+    };
+
+    struct Lobby {
+        uint16_t delay;
+        uint16_t start;
+    } lobby = {
+        .delay = 100,
+        .start = 0
     };
 
     struct Menu {
@@ -677,13 +702,28 @@ int main() {
         .sel_player_i = 0,
     };
 
+    struct Network {
+        struct sockaddr_in server_addr;
+    } network;
+
+    struct NetworkHost {
+        int fd[MAX_PLAYERS_SIZE];
+    } host;
+
+    struct NetworkClient {
+        int fd;
+        size_t player_i;
+    } client;
+
+    bool is_online = false;
+    bool is_host = false;
+
     // Main switch
     while (true) {
         uint32_t curr_time = SDL_GetTicks();
         switch (mode) {
         case CHOOSE_NETWORK: {
-            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
-            SDL_RenderClear(renderer);
+            clearScreen();
 
 #define CHOOSE_NETWORK_MSGS_SIZE 3
 
@@ -721,10 +761,12 @@ int main() {
                         if (rectContainsPos(&hitbox[i], &mouse_pos)) {
                             switch ((enum CHOOSE_NETWORK_OPTIONS)i) {
                             case CN_LOCAL: {
+                                is_online = false;
                                 mode = MENU;
                             } break; 
                             case CN_ONLINE: {
-                                // @todo
+                                is_online = true;
+                                mode = HOST_OR_JOIN;
                             } break;
                             case CN_QUIT: {
                                 goto cleanup_media;
@@ -737,13 +779,243 @@ int main() {
             }
 
         } break;
+        case HOST_OR_JOIN: {
+            // @todo close sockets
+            // @todo currently it ignores endianness
+
+#define HOST_OR_JOIN_MSGS_SIZE 2
+            char* msgs[HOST_OR_JOIN_MSGS_SIZE] = {"Host", "Join"};
+
+            enum HostOrJoin {
+                HOST,
+                JOIN
+            };
+
+            SDL_Color colors[HOST_OR_JOIN_MSGS_SIZE];
+            for (size_t i = 0; i < HOST_OR_JOIN_MSGS_SIZE; i++) {
+                colors[i] = menu.button_color;
+            }
+
+            SDL_Rect hitboxes[HOST_OR_JOIN_MSGS_SIZE];
+
+            clearScreen();
+            renderMsgsCentered(msgs, HOST_OR_JOIN_MSGS_SIZE, hitboxes, colors);
+
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                switch (event.type) {
+                case SDL_QUIT: {
+                    goto cleanup_media;
+                } break;
+                case SDL_KEYDOWN: {
+                    if (event.key.keysym.sym == SDLK_ESCAPE) {
+                        mode = CHOOSE_NETWORK;
+                    }
+                } break;
+                case SDL_MOUSEBUTTONDOWN: {
+                    struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
+                    // @todo clicking to buttons at the same time when pixel perfect?
+                    for (size_t i = 0; i < HOST_OR_JOIN_MSGS_SIZE; i++) {
+                        if (rectContainsPos(&hitboxes[i], &mouse_pos)) {
+                            // Get IP
+                            // @todo get max(ipv4.len, ipv6.len)
+                            printf("Enter the IP address: ");
+                            char ip[51];
+                            scanf(" %50s", ip);
+
+                            // Get port
+                            uint16_t port;
+                            while (true) {
+                                printf("Choose a port: ");                                  
+
+                                // @todo ub in case of overflow
+                                int res = scanf("%hu", &port);
+
+                                if (res != 1 || port < 1024) {
+                                    fprintf(stderr, "Invalid port\n");
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            // @todo check if it is linux
+
+                            // Init socket
+                            int fd = socket(AF_INET, SOCK_STREAM, 0);
+
+                            if (fd < 0) {
+                                perror("Socket creation failed\n");
+                                goto cleanup_media;
+                            }
+
+                            if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+                                perror("Error setting O_NONBLOCK");
+                                goto cleanup_media;
+                            }
+                            
+                            memset(&network.server_addr, 0, sizeof(network.server_addr));
+                            network.server_addr.sin_family = AF_INET;
+                            network.server_addr.sin_port = htons(port);
+
+                            if (inet_pton(AF_INET, ip, &network.server_addr.sin_addr) < 0) {
+                                perror("Error parsing ip");
+                                goto cleanup_media;
+                            }
+
+                            // Bind/Connect
+                            switch ((enum HostOrJoin)i) {
+                            case HOST: {
+                                is_host = true;
+
+                                host.fd[0] = fd;
+                                game_state.players_size = 1;
+
+                                // @todo use select or poll?
+                                if (bind(host.fd[0], (struct sockaddr*)&network.server_addr, sizeof(network.server_addr)) < 0) {
+                                    perror("Bind failed");
+                                    goto cleanup;
+                                }
+
+                                if (listen(host.fd[0], MAX_PLAYERS_SIZE) < 0) {
+                                    perror("Listening failed");
+                                    goto cleanup;
+                                }
+
+                                printf("Listening\n");
+                            } break;
+                            case JOIN: {
+                                is_host = false;
+
+                                while (true) {
+                                    if (connect(fd, (struct sockaddr*) &network.server_addr, sizeof(network.server_addr)) < 0
+                                            && errno != EINPROGRESS) {
+                                        perror("Failed to connect");
+                                        goto cleanup;
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                while (true) {
+                                    client.fd = fd;
+
+                                    size_t x;
+                                    int len = recv(client.fd, &x, sizeof(x), MSG_PEEK);
+                                    if (len == -1 && errno != EAGAIN) {
+                                        perror("Failed to read player_i");
+                                        goto cleanup;
+                                    } else if (len == sizeof(client.player_i)) {
+                                        recv(client.fd, &client.player_i, sizeof(client.player_i), 0);
+                                        printf("player_i: %zu\n", client.player_i);
+                                        break;
+                                    }
+                                }
+
+                                printf("Connected\n");
+                            } break;
+                            }
+
+                            mode = LOBBY;
+                        }      
+                    }
+                } break;
+                } 
+            }
+        } break;
+        case LOBBY: {
+            clearScreen();
+
+            if (is_host) {
+                socklen_t len = sizeof(network.server_addr);
+                int fd = accept(host.fd[0], (struct sockaddr*) &network.server_addr, &len);
+                if (fd >= 0) {
+                    if (write(fd, &game_state.players_size, sizeof(game_state.players_size)) < 0) {
+                        perror("Error sending player_i");
+                        goto cleanup_media;
+                    }
+                    host.fd[game_state.players_size++] = fd;
+                }
+
+                if (curr_time > lobby.start + lobby.delay) {
+                    lobby.start = curr_time;
+                    for (size_t i = 1; i < game_state.players_size; i++) {
+                        if (write(host.fd[i], &game_state.players_size, sizeof(game_state.players_size)) < 0) {
+                            perror("Error sending players_size");
+                            goto cleanup_media;
+                        }
+                    }
+                }
+            } else {
+                size_t x;
+                ssize_t bytes = recv(client.fd, &x, sizeof(x), MSG_PEEK); 
+                if (bytes < 0 && errno != EAGAIN) {
+                    perror("Error reading player_i");
+                    goto cleanup_media;
+                } else if (bytes == sizeof(client.player_i)) {
+                    recv(client.fd, &game_state.players_size, sizeof(game_state.players_size), 0); 
+                }
+            }
+
+            enum {
+                CONNECT_INFO_QTY = 4
+            };
+
+            enum {
+                READY = CONNECT_INFO_QTY
+            };
+
+            char connect_info[CONNECT_INFO_QTY][24];
+            {
+                for (size_t i = 0; i < CONNECT_INFO_QTY; i++) {
+                    strcpy(connect_info[i], "Player 0: Not connected");
+                    connect_info[i][7] = '1' + i;
+                }
+
+                for (size_t i = 0; i < game_state.players_size; i++) {
+                    strcpy(&connect_info[i][10], "Connected");
+                }
+            }
+
+            char* ready = "Ready";
+
+            char* msgs[CONNECT_INFO_QTY+1];
+            for (size_t i = 0; i < CONNECT_INFO_QTY+1; i++) {
+                msgs[i] = connect_info[i];
+            }
+            msgs[CONNECT_INFO_QTY] = ready;
+
+            SDL_Rect hitboxes[CONNECT_INFO_QTY+1];
+
+            SDL_Color colors[CONNECT_INFO_QTY+1];
+            for (size_t i = 0; i < CONNECT_INFO_QTY+1; i++) {
+                colors[i] = menu.button_color;
+            }
+
+            renderMsgsCentered(msgs, CONNECT_INFO_QTY+1, hitboxes, colors);
+
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                switch (event.type) {
+                case SDL_QUIT: {
+                    goto cleanup_media;
+                } break;
+                case SDL_MOUSEBUTTONDOWN: {
+                    struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
+                    if (rectContainsPos(&hitboxes[READY], &mouse_pos)) {
+                        if (is_host) {
+                            mode = RUNNING;
+                        }
+                    }
+                } break;
+                }
+            }
+        } break;
         case MENU: {
 
 #define MENU_BUTTONS_SIZE 3
 
             // clean screen
-            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
-            SDL_RenderClear(renderer);
+            clearScreen();
 
             // draw buttons
             enum Button {
@@ -809,8 +1081,7 @@ int main() {
             }
         } break;
         case REMAP_MENU: {
-            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
-            SDL_RenderClear(renderer);
+            clearScreen();
 
             // Select player button
             SDL_Rect sel_player_hitbox;
@@ -926,8 +1197,7 @@ int main() {
             }
         } break;
         case OPTIONS_MENU: {
-            SDL_SetRenderDrawColor(renderer, 0x18, 0x18, 0x18, 0xFF);
-            SDL_RenderClear(renderer);
+            clearScreen();
 
 #define OPTIONS_MENU_BUTTONS_SIZE 2
 
@@ -1004,6 +1274,12 @@ int main() {
                 mode = GAME_OVER;
                 game_over.start = curr_time;
                 already_running = false;
+            }
+
+            if (is_online && is_host) {
+                for (size_t i = 0; i < game_state.players_size; i++) {
+                    
+                }
             }
 
             // ==========
