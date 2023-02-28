@@ -309,18 +309,18 @@ void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
 
         // Move
         switch (game_state->players[i].direc) {
-        case DOWN:
+        case DOWN: {
             game_state->players[i].pos.y++;
-        break;
-        case LEFT:
+        } break;
+        case LEFT: {
             game_state->players[i].pos.x--;
-        break;
-        case RIGHT:
+        } break;
+        case RIGHT: {
             game_state->players[i].pos.x++;
-        break;
-        case UP:
+        } break;
+        case UP: {
             game_state->players[i].pos.y--;
-        break;
+        } break;
         }
 
         // Wraparound
@@ -482,18 +482,18 @@ void playerRenderHead(struct Player* p_player) {
 
     double rotation;
     switch (p_player->direc) {
-    case DOWN:
+    case DOWN: {
         rotation = 180;
-    break;
-    case RIGHT:
+    } break;
+    case RIGHT: {
         rotation = 90;
-    break;
-    case LEFT:
+    } break;
+    case LEFT: {
         rotation = 270;
-    break;
-    case UP:
+    } break;
+    case UP: {
         rotation = 0;
-    break;
+    } break;
     }
     
     SDL_RenderCopyEx(renderer, head_text, NULL, &head_rect, rotation, NULL, 0);
@@ -665,6 +665,699 @@ void writeBytes(int fd, void* data, size_t data_size) {
     }
 }
 
+struct Input {
+    struct Pos mouse_pos;
+    bool is_button_clicked;
+    bool is_key_pressed;
+    SDL_Keycode key_pressed;
+    bool letters_pressed[26];
+    bool arrows_pressed[4];
+};
+
+bool validKey(SDL_Keycode key) {
+    return (SDLK_a <= key && key <= SDLK_z)
+        || (SDLK_RIGHT <= key && key <= SDLK_UP);
+}
+
+bool getInput(struct Input* input) {
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        switch (event.type) {
+        case SDL_QUIT: {
+            return false;
+        } break;
+        case SDL_MOUSEBUTTONDOWN: {
+            input->mouse_pos.x = event.button.x;
+            input->mouse_pos.y = event.button.y;
+            input->is_button_clicked = true;
+        } break;
+        case SDL_KEYDOWN: {
+            SDL_Keycode key = event.key.keysym.sym;
+            if (SDLK_a <= key && key <= SDLK_z) {
+                input->letters_pressed[key - SDLK_a] = true;
+            } else if (SDLK_RIGHT <= key && key <= SDLK_UP) {
+                input->arrows_pressed[key - SDLK_RIGHT] = true;
+            }
+            input->is_key_pressed = true;
+            input->key_pressed = key;
+        } break;
+        }
+    }
+
+    return true;
+}
+
+
+// @todo local variables?
+// Init game structs
+struct GameState game_state = {
+    .players_size = 1,
+    .dead_bodies_size = 0,
+};
+
+enum Mode mode = MENU;
+enum MenuMode menu_mode = MN_CHOOSE_NETWORK;
+bool already_running = false;
+
+struct GameOver {
+    uint32_t delay;
+    uint32_t start;
+} game_over = {
+    .delay = 1000,
+};
+
+struct Lobby {
+    uint16_t delay;
+    uint16_t start;
+} lobby = {
+    .delay = 100,
+    .start = 0
+};
+
+struct Menu {
+    SDL_Color button_color;
+} menu = {
+    .button_color = {0xFF, 0x00, 0x00, 0xFF},
+};
+
+struct RemapMenu {
+    SDL_Color button_sel_color;
+    bool button_sel;
+    size_t button_sel_i;
+    size_t sel_player_i;
+} remap_menu = {
+    .button_sel_color = {0x00, 0xFF, 0x00, 0xFF},
+    .button_sel = false,
+    .sel_player_i = 0,
+};
+
+struct Network {
+    struct sockaddr_in host_addr;
+} network;
+
+struct NetworkHost {
+    int fd[MAX_PLAYERS_SIZE];
+} host;
+
+struct NetworkClient {
+    int fd;
+    size_t player_i;
+} client;
+
+bool is_online = false;
+bool is_host = false;
+
+uint32_t curr_time; 
+
+struct Input input;
+
+bool runMenu() {
+    clearScreen();
+
+    switch (menu_mode) {
+    case MN_CHOOSE_NETWORK: {
+        enum {BUTTONS_QTY = 3};
+        char* msgs[BUTTONS_QTY] = {"Local", "Online", "Quit"};
+        enum Options {LOCAL, ONLINE, QUIT};
+
+        SDL_Rect hitboxes[BUTTONS_QTY];
+
+        SDL_Color colors[BUTTONS_QTY];
+        for (size_t i = 0; i < BUTTONS_QTY; i++) {
+            colors[i] = menu.button_color;
+        }
+
+        renderMsgsCentered(msgs, BUTTONS_QTY, hitboxes, colors);
+
+        if (input.is_button_clicked) {
+            for (size_t i = 0; i < BUTTONS_QTY; i++) {
+                if (rectContainsPos(&hitboxes[i], &input.mouse_pos)) {
+                    switch ((enum Options)i) {
+                    case LOCAL: {
+                        is_online = false;
+                        menu_mode = MN_MAIN_MENU;
+                    } break; 
+                    case ONLINE: {
+                        is_online = true;
+                        menu_mode = MN_HOST_OR_JOIN;
+                    } break;
+                    case QUIT: {
+                        return false;
+                    } break;
+                    }  
+                } 
+            }
+        }
+    } break;
+    case MN_HOST_OR_JOIN: {
+        // @todo close sockets
+        // @todo currently read/write ignores endianness
+
+        enum {BUTTONS_QTY = 2};
+        char* msgs[BUTTONS_QTY] = {"Host", "Join"};
+        enum HostOrJoin {HOST, JOIN};
+
+        SDL_Rect hitboxes[BUTTONS_QTY];
+
+        SDL_Color colors[BUTTONS_QTY];
+        for (size_t i = 0; i < BUTTONS_QTY; i++) {
+            colors[i] = menu.button_color;
+        }
+
+        renderMsgsCentered(msgs, BUTTONS_QTY, hitboxes, colors);
+
+        if (input.is_button_clicked) {
+            for (size_t i = 0; i < BUTTONS_QTY; i++) {
+                if (rectContainsPos(&hitboxes[i], &input.mouse_pos)) {
+                    // Get IP
+                    // @todo get max(ipv4.len, ipv6.len)
+
+                    struct in_addr addr;
+                    while (true) {
+                        printf("Enter the IP address: ");
+                        char ip[51];
+                        int s_ret = scanf(" %50s", ip);
+
+                        if (s_ret != 1) {
+                            while (getchar() != '\n') {}
+                        }
+
+                        int ret = inet_pton(AF_INET, ip, &addr);
+
+                        if (ret == -1) {
+                            fprintf(stderr, "inet_pton invalid address family\n");
+                            exit(-1);
+                        } else if (ret == 0) {
+                            printf("Invalid IP\n");     
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Get port
+                    uint16_t port;
+                    while (true) {
+                        printf("Choose a port: ");                                  
+
+                        // @todo ub in case of overflow
+                        int res = scanf("%hu", &port);
+
+                        if (res != 1 || port < 1024) {
+                            fprintf(stderr, "Invalid port\n");
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // @todo check if it is linux
+
+                    // Init socket
+                    int fd = socket(AF_INET, SOCK_STREAM, 0);
+
+                    if (fd < 0) {
+                        perror("Socket creation failed\n");
+                        exit(-1);
+                    }
+
+                    if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+                        perror("Error setting O_NONBLOCK");
+                        exit(-1);
+                    }
+
+                    memset(&network.host_addr, 0, sizeof(network.host_addr));
+                    network.host_addr.sin_family = AF_INET;
+                    network.host_addr.sin_port = htons(port);
+                    network.host_addr.sin_addr = addr;
+
+                    // Bind/Connect
+                    switch ((enum HostOrJoin)i) {
+                    case HOST: {
+                        is_host = true;
+
+                        host.fd[0] = fd;
+                        game_state.players_size = 1;
+
+                        // @todo use select or poll?
+                        if (bind(host.fd[0], (struct sockaddr*)&network.host_addr, sizeof(network.host_addr)) < 0) {
+                            perror("Bind failed");
+                            exit(-1);
+                        }
+
+                        if (listen(host.fd[0], MAX_PLAYERS_SIZE) < 0) {
+                            perror("Listening failed");
+                            exit(-1);
+                        }
+
+                        printf("Listening\n");
+                    } break;
+                    case JOIN: {
+                        is_host = false;
+
+                        client.fd = fd;
+
+                        while (true) {
+                            if (connect(fd, (struct sockaddr*) &network.host_addr, sizeof(network.host_addr)) < 0
+                                    && errno != EINPROGRESS) {
+                                perror("Failed to connect");
+                                exit(-1);
+                            } else {
+                                break;
+                            }
+                        }
+                        readBytes(client.fd, &client.player_i, sizeof(client.player_i), true);
+
+                        printf("Connected\n");
+                    } break;
+                    }
+
+                    menu_mode = MN_LOBBY;
+                }      
+            }
+        }
+    } break;
+    case MN_LOBBY: {
+        enum Type {
+            START_GAME,
+            UPDATE, 
+        };
+
+        struct Packet {
+            enum Type type;
+            size_t update_players_size;
+        };
+
+        if (is_host) {
+            socklen_t len = sizeof(network.host_addr);
+            int fd = accept(host.fd[0], (struct sockaddr*) &network.host_addr, &len);
+            if (fd >= 0) {
+                writeBytes(fd, &game_state.players_size, sizeof(game_state.players_size));
+
+                if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+                    perror("Error setting O_NONBLOCK");
+                    exit(-1);
+                }
+
+                host.fd[game_state.players_size++] = fd;
+            }
+
+            if (curr_time > lobby.start + lobby.delay) {
+                lobby.start = curr_time;
+                for (size_t i = 1; i < game_state.players_size; i++) {
+                    struct Packet packet = {.type = UPDATE, .update_players_size = game_state.players_size};
+                    writeBytes(host.fd[i], &packet, sizeof(packet));
+                }
+            }
+        } else {
+            while (true) {
+                struct Packet packet;
+                if (!readBytes(client.fd, &packet, sizeof(packet), false)) {
+                    break;
+                }
+
+                switch (packet.type) {
+                case UPDATE: {
+                    game_state.players_size = packet.update_players_size;
+                } break;
+                case START_GAME: {
+                    mode = RUNNING;
+                } break;
+                }
+            }
+        }
+
+        // Render buttons
+        enum {BUTTONS_QTY = MAX_PLAYERS_SIZE + 1};
+        enum {READY_BUTTON = MAX_PLAYERS_SIZE};
+
+        char connect_info[MAX_PLAYERS_SIZE][24];
+        for (size_t i = 0; i < MAX_PLAYERS_SIZE; i++) {
+            strcpy(connect_info[i], "Player 0: Not connected");
+            connect_info[i][7] = '1' + i;
+        }
+        for (size_t i = 0; i < game_state.players_size; i++) {
+            strcpy(&connect_info[i][10], "Connected");
+        }
+
+        char* msgs[MAX_PLAYERS_SIZE+1];
+        for (size_t i = 0; i < MAX_PLAYERS_SIZE; i++) {
+            msgs[i] = connect_info[i];
+        }
+        msgs[MAX_PLAYERS_SIZE] = "Ready";
+
+        SDL_Rect hitboxes[MAX_PLAYERS_SIZE+1];
+
+        SDL_Color colors[MAX_PLAYERS_SIZE+1];
+        for (size_t i = 0; i < MAX_PLAYERS_SIZE+1; i++) {
+            colors[i] = menu.button_color;
+        }
+
+        renderMsgsCentered(msgs, MAX_PLAYERS_SIZE+1, hitboxes, colors);
+
+        if (input.is_button_clicked) {
+            if (is_host) {
+                if (rectContainsPos(&hitboxes[READY_BUTTON], &input.mouse_pos)) {
+                    mode = RUNNING;
+                    for (size_t i = 1; i < game_state.players_size; i++) {
+                        struct Packet packet = {.type = START_GAME};
+                        writeBytes(host.fd[i], &packet, sizeof(packet));
+                    }
+                }
+            }
+        }
+    } break;
+    case MN_MAIN_MENU: {
+        enum {BUTTONS_QTY = 3};
+        enum Button {M_START, M_OPTIONS, M_BACK};
+        char* msg[BUTTONS_QTY] = {"Start", "Options", "Back"};
+
+        if (already_running) {
+            msg[0] = "Continue";
+        }
+
+        SDL_Color colors[BUTTONS_QTY]; 
+        for (size_t i = 0; i < BUTTONS_QTY; i++) {
+            colors[i] = menu.button_color;                
+        }
+
+        SDL_Rect hitboxes[BUTTONS_QTY];
+        renderMsgsCentered(msg, BUTTONS_QTY, hitboxes, colors);
+
+        if (input.is_button_clicked) {
+            for (size_t i = 0; i < BUTTONS_QTY; i++) {
+                if (rectContainsPos(&hitboxes[i], &input.mouse_pos)) {
+                    switch ((enum Button)i) {
+                    case M_START: {
+                        mode = RUNNING;
+                        already_running = true;
+                    } break;
+                    case M_OPTIONS: {
+                        menu_mode = MN_OPTIONS_MENU;
+                    } break;
+                    case M_BACK: {
+                        menu_mode = MN_CHOOSE_NETWORK;
+                        reset(&game_state);
+                        already_running = false;
+                    } break;
+                    }
+                }
+            }
+        }
+
+        if (input.is_key_pressed && input.key_pressed == SDLK_ESCAPE) {
+            if (already_running) {
+                mode = RUNNING;
+            } else {
+                menu_mode = MN_CHOOSE_NETWORK;
+            }
+        }
+    } break;
+    case MN_REMAP_MENU: {
+        // Select player button
+        SDL_Rect sel_player_hitbox;
+        {
+            char msg[9] = "Player 0";
+
+            msg[7] = remap_menu.sel_player_i + 1 + '0';
+
+            sel_player_hitbox.x = 0;
+            sel_player_hitbox.y = 0;
+            TTF_SizeText(font, msg, &sel_player_hitbox.w, &sel_player_hitbox.h);
+
+            renderMsg(msg, &sel_player_hitbox, menu.button_color);
+        }
+
+        enum {BUTTONS_QTY = 4};
+
+        SDL_Rect hitbox[BUTTONS_QTY];
+        {
+            char msg[BUTTONS_QTY][9];
+            // It has to be in this order (bindings order)
+            char* pre_msg[BUTTONS_QTY] = {"DOWN: 0", "LEFT: 0", "RIGHT: 0", "UP: 0"};
+
+            for (size_t i = 0; i < BUTTONS_QTY; i++) {
+                strcpy(msg[i], pre_msg[i]);
+            }
+
+            for (size_t i = 0; i < BUTTONS_QTY; i++) {
+                size_t len = strlen(msg[i]);
+
+                SDL_Keycode key = game_state.players[remap_menu.sel_player_i].bindings[i];
+
+                if (key <= 0x7F) {
+                    msg[i][len-1] = (char)key;
+                } else {
+                    switch (key) {
+                    case SDLK_DOWN: {
+                        msg[i][len-1] = 'v';
+                    } break;
+                    case SDLK_LEFT: {
+                        msg[i][len-1] = '<';
+                    } break;
+                    case SDLK_RIGHT: {
+                        msg[i][len-1] = '>';
+                    } break;
+                    case SDLK_UP: {
+                        msg[i][len-1] = '^';
+                    } break;
+                    }
+                }
+            }
+
+            char* p_msg[BUTTONS_QTY];
+            for (size_t i = 0; i < BUTTONS_QTY; i++) {
+                p_msg[i] = msg[i]; 
+            }
+
+            SDL_Color colors[BUTTONS_QTY];
+
+            for (size_t i = 0; i < BUTTONS_QTY; i++) {
+                colors[i] = menu.button_color;
+            }
+
+            if (remap_menu.button_sel) {
+                colors[remap_menu.button_sel_i] = remap_menu.button_sel_color;
+            }
+
+            renderMsgsCentered(p_msg, BUTTONS_QTY, hitbox, colors);
+        }
+
+        // Events
+        if (input.is_button_clicked) {
+            bool pressed_button = false;
+            for (size_t i = 0; i < BUTTONS_QTY; i++) {
+                if (!remap_menu.button_sel && rectContainsPos(&hitbox[i], &input.mouse_pos)) {
+                    pressed_button = true;
+                    remap_menu.button_sel = true;
+                    remap_menu.button_sel_i = i;
+                } 
+            }
+            if (!pressed_button) {
+                remap_menu.button_sel = false;
+            }
+
+            if (rectContainsPos(&sel_player_hitbox, &input.mouse_pos)) {
+                remap_menu.sel_player_i++;
+                if (remap_menu.sel_player_i >= game_state.players_size) {
+                    remap_menu.sel_player_i = 0;
+                }
+            }
+        }
+        if (input.is_key_pressed) {
+            if (input.is_key_pressed && input.key_pressed == SDLK_ESCAPE) {
+                menu_mode = MN_OPTIONS_MENU;
+            } else if (remap_menu.button_sel && validKey(input.key_pressed)) {
+                game_state.players[remap_menu.sel_player_i].bindings[remap_menu.button_sel_i] = input.key_pressed;
+                remap_menu.button_sel = false;
+            }
+        } 
+    } break;
+    case MN_OPTIONS_MENU: {
+        enum {BUTTONS_SIZE = 2};
+
+        enum Options {PLAYERS, REMAP};
+
+        // It has to be in this order
+        char* pre_msg[BUTTONS_SIZE] = {
+            "Players: 0",
+            "Remap"
+        };
+        char msg[BUTTONS_SIZE][11];
+
+        for (size_t i = 0; i < BUTTONS_SIZE; i++) {
+            strcpy(msg[i], pre_msg[i]);
+        }
+
+        size_t len = strlen(msg[PLAYERS]);
+        msg[PLAYERS][len-1] = game_state.players_size + '0';
+
+        char* p_msg[BUTTONS_SIZE];
+        for (size_t i = 0; i < BUTTONS_SIZE; i++) {
+            p_msg[i] = msg[i]; 
+        }
+
+        SDL_Color colors[BUTTONS_SIZE];
+        for (size_t i = 0; i < BUTTONS_SIZE; i++) {
+            colors[i] = menu.button_color;
+        }
+
+        SDL_Rect hitbox[BUTTONS_SIZE];
+
+        renderMsgsCentered(p_msg, BUTTONS_SIZE, hitbox, colors);
+
+        if (input.is_key_pressed) {
+            if (input.is_key_pressed && input.key_pressed == SDLK_ESCAPE) {
+                menu_mode = MN_MAIN_MENU;
+            }
+            if (remap_menu.button_sel) {
+                remap_menu.button_sel = false;
+                game_state.players[remap_menu.sel_player_i].bindings[remap_menu.button_sel_i] = input.key_pressed;
+            }
+        }
+        if (input.is_button_clicked) {
+            if (rectContainsPos(&hitbox[PLAYERS], &input.mouse_pos)) {
+                game_state.players_size++;
+                if (game_state.players_size > MAX_PLAYERS_SIZE) {
+                    game_state.players_size = 1;
+                }
+            }
+            if (rectContainsPos(&hitbox[REMAP], &input.mouse_pos)) {
+                menu_mode = MN_REMAP_MENU;
+            }
+        }
+    } break;
+    }
+    return true;
+}
+
+void runRunning() {
+    bool all_died = true;
+    for (size_t i = 0; i < game_state.players_size; i++) {
+        if (!game_state.players[i].game_over) all_died = false;
+    }
+
+    if (all_died) {
+        mode = GAME_OVER;
+        game_over.start = curr_time;
+        already_running = false;
+    }
+
+    // ==========
+    // Input
+    // ==========
+
+    // Get online directions
+    if (is_online && is_host) {
+        for (size_t i = 1; i < game_state.players_size; i++) {
+            while (true) {
+                enum Direction direc;
+                if (!readBytes(host.fd[i], &direc, sizeof(direc), false)) {
+                    break;
+                }
+                addDirection(&game_state.players[i], direc);
+            }
+        }
+    }
+
+    // Events
+    if (input.key_pressed) {
+        if (is_online) {
+            if (is_host) {
+                enum Direction direc;
+                if (mapKeycode(game_state.players[0].bindings, input.key_pressed, &direc)) {
+                    addDirection(&game_state.players[0], direc);
+                }
+            } else {
+                enum Direction direc;
+                if (mapKeycode(game_state.players[client.player_i].bindings, input.key_pressed, &direc)) {
+                    writeBytes(client.fd, &direc, sizeof(direc));
+                }
+            }
+        } else {
+            if (input.key_pressed == SDLK_ESCAPE) {
+                mode = MENU;
+            } else {
+                for (size_t i = 0; i < game_state.players_size; i++) {
+                    if (!game_state.players[i].game_over) {
+                        enum Direction direc;
+                        if (mapKeycode(game_state.players[i].bindings, input.key_pressed, &direc)) {
+                            addDirection(&game_state.players[i], direc);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Update
+    if (!(is_online && !is_host)) {
+        gameStateUpdate(&game_state, curr_time);
+    }
+
+    if (is_online) {
+        if (is_host) {
+            for (size_t i = 1; i < game_state.players_size; i++) {
+                writeBytes(host.fd[i], &game_state, sizeof(game_state));
+            }
+        } else {
+            struct GameState temp;
+            if (readBytes(client.fd, &temp, sizeof(temp), false)) {
+                game_state = temp;
+            }
+        }
+    } 
+
+    // Render
+    for (size_t i = 0; i < game_state.players_size; i++) {
+        if (game_state.players[i].score > 999) {
+            fprintf(stderr, "Score too big!\n");
+            exit(-1);
+        }
+    }
+
+    render(&game_state);
+}
+
+void runGameOver() {
+    if (curr_time - game_over.start > game_over.delay) {
+        mode = MENU;
+        menu_mode = MN_MAIN_MENU;
+        reset(&game_state);
+    }
+
+    bool draw = false;
+    int max_score = 0;
+    size_t winner;
+    for (size_t i = 0; i < game_state.players_size; i++) {
+        if (i == 0) {
+            draw = false;
+            max_score = game_state.players[i].score;
+            winner = 0;
+        }
+        else if (game_state.players[i].score == max_score) {
+            draw = true;
+        } else if (game_state.players[i].score > max_score) {
+            draw = false;
+            max_score = game_state.players[i].score;
+            winner = i;
+        }     
+    }
+
+    char msg[14];
+
+    if (draw) {      
+        strcpy(msg, "Draw");
+    } else {
+        strcpy(msg, "Player 0 wins"); 
+        msg[7] = winner + 1 + '0';
+    }
+
+    SDL_Rect game_over_rect;
+    TTF_SizeText(font, msg, &game_over_rect.w, &game_over_rect.h);
+    game_over_rect.x = WINDOW_WIDTH/2 - game_over_rect.w/2;
+    game_over_rect.y = WINDOW_HEIGHT/2 - game_over_rect.h/2;
+
+    renderMsg(msg, &game_over_rect, menu.button_color);
+}
 
 int main() {
     srand(time(NULL));
@@ -676,12 +1369,6 @@ int main() {
     if (!loadMedia()) {
         goto cleanup;
     }
-
-    // Init game structs
-    struct GameState game_state = {
-        .players_size = 1,
-        .dead_bodies_size = 0,
-    };
 
     reset(&game_state);
 
@@ -697,789 +1384,27 @@ int main() {
         memcpy(&game_state.players[i].bindings, bindings[i], sizeof(SDL_Keycode)*4);
     }
 
-    enum Mode mode = MENU;
-    enum MenuMode menu_mode = MN_CHOOSE_NETWORK;
-    bool already_running = false;
-
-    struct GameOver {
-        uint32_t delay;
-        uint32_t start;
-    } game_over = {
-        .delay = 1000,
-    };
-
-    struct Lobby {
-        uint16_t delay;
-        uint16_t start;
-    } lobby = {
-        .delay = 100,
-        .start = 0
-    };
-
-    struct Menu {
-        SDL_Color button_color;
-    } menu = {
-        .button_color = {0xFF, 0x00, 0x00, 0xFF},
-    };
-
-    struct RemapMenu {
-        SDL_Color button_sel_color;
-        bool button_sel;
-        size_t button_sel_i;
-        size_t sel_player_i;
-    } remap_menu = {
-        .button_sel_color = {0x00, 0xFF, 0x00, 0xFF},
-        .button_sel = false,
-        .sel_player_i = 0,
-    };
-
-    struct Network {
-        struct sockaddr_in host_addr;
-    } network;
-
-    struct NetworkHost {
-        int fd[MAX_PLAYERS_SIZE];
-    } host;
-
-    struct NetworkClient {
-        int fd;
-        size_t player_i;
-    } client;
-
-    bool is_online = false;
-    bool is_host = false;
-
     // Main switch
     while (true) {
-        uint32_t curr_time = SDL_GetTicks();
+        curr_time = SDL_GetTicks();
+
+        memset(&input, 0, sizeof(input));
+        if (!getInput(&input)) {
+            // @todo improve cleanup method
+            goto cleanup_media;
+        }
+
         switch (mode) {
         case MENU: {
-            switch (menu_mode) {
-                case MN_CHOOSE_NETWORK: {
-                    clearScreen();
-
-#define CHOOSE_NETWORK_MSGS_SIZE 3
-
-                    char* msg[CHOOSE_NETWORK_MSGS_SIZE] = {
-                        "Local",
-                        "Online",
-                        "Quit",
-                    };
-
-                    enum CHOOSE_NETWORK_OPTIONS {
-                        CN_LOCAL,
-                        CN_ONLINE,
-                        CN_QUIT,
-                    };
-
-                    SDL_Rect hitbox[CHOOSE_NETWORK_MSGS_SIZE];
-
-                    SDL_Color color[CHOOSE_NETWORK_MSGS_SIZE];
-                    for (size_t i = 0; i < CHOOSE_NETWORK_MSGS_SIZE; i++) {
-                        color[i] = menu.button_color;
-                    }
-
-                    renderMsgsCentered(msg, CHOOSE_NETWORK_MSGS_SIZE, hitbox, color);
-
-                    SDL_Event event;
-                    while (SDL_PollEvent(&event)) {
-                        switch (event.type) {
-                            case SDL_QUIT: {
-                                goto cleanup_media;
-                            } break;
-                            case SDL_MOUSEBUTTONDOWN: {
-                                struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
-
-                                for (size_t i = 0; i < CHOOSE_NETWORK_MSGS_SIZE; i++) {
-                                    if (rectContainsPos(&hitbox[i], &mouse_pos)) {
-                                        switch ((enum CHOOSE_NETWORK_OPTIONS)i) {
-                                            case CN_LOCAL: {
-                                                is_online = false;
-                                                menu_mode = MN_MAIN_MENU;
-                                            } break; 
-                                            case CN_ONLINE: {
-                                                is_online = true;
-                                                menu_mode = MN_HOST_OR_JOIN;
-                                            } break;
-                                            case CN_QUIT: {
-                                                goto cleanup_media;
-                                            } break;
-                                        }  
-                                    } 
-                                }
-                            } break;
-                        }
-                    }
-
-                } break;
-                case MN_HOST_OR_JOIN: {
-                    // @todo close sockets
-                    // @todo currently it ignores endianness
-
-#define HOST_OR_JOIN_MSGS_SIZE 2
-                    char* msgs[HOST_OR_JOIN_MSGS_SIZE] = {"Host", "Join"};
-
-                    enum HostOrJoin {
-                        HOST,
-                        JOIN
-                    };
-
-                    SDL_Color colors[HOST_OR_JOIN_MSGS_SIZE];
-                    for (size_t i = 0; i < HOST_OR_JOIN_MSGS_SIZE; i++) {
-                        colors[i] = menu.button_color;
-                    }
-
-                    SDL_Rect hitboxes[HOST_OR_JOIN_MSGS_SIZE];
-
-                    clearScreen();
-                    renderMsgsCentered(msgs, HOST_OR_JOIN_MSGS_SIZE, hitboxes, colors);
-
-                    SDL_Event event;
-
-                    bool quit_mode = false;
-                    while (SDL_PollEvent(&event)) {
-                        if (quit_mode) break;
-
-                        switch (event.type) {
-                            case SDL_QUIT: {
-                                goto cleanup_media;
-                            } break;
-                            case SDL_KEYDOWN: {
-                                if (event.key.keysym.sym == SDLK_ESCAPE) {
-                                    menu_mode = MN_CHOOSE_NETWORK;
-                                }
-                            } break;
-                            case SDL_MOUSEBUTTONDOWN: {
-                                struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
-                                // @todo clicking two buttons at the same time when pixel perfect?
-                                for (size_t i = 0; i < HOST_OR_JOIN_MSGS_SIZE; i++) {
-                                    if (rectContainsPos(&hitboxes[i], &mouse_pos)) {
-                                        // Get IP
-                                        // @todo get max(ipv4.len, ipv6.len)
-
-                                        struct in_addr addr;
-                                        while (true) {
-                                            printf("Enter the IP address: ");
-                                            char ip[51];
-                                            int s_ret = scanf(" %50s", ip);
-
-                                            if (s_ret != 1) {
-                                                while (getchar() != '\n') {}
-                                            }
-
-                                            int ret = inet_pton(AF_INET, ip, &addr);
-
-                                            if (ret == -1) {
-                                                fprintf(stderr, "inet_pton invalid address family\n");
-                                                goto cleanup_media;
-                                            } else if (ret == 0) {
-                                                printf("Invalid IP\n");     
-                                            } else {
-                                                break;
-                                            }
-                                        }
-
-                                        // Get port
-                                        uint16_t port;
-                                        while (true) {
-                                            printf("Choose a port: ");                                  
-
-                                            // @todo ub in case of overflow
-                                            int res = scanf("%hu", &port);
-
-                                            if (res != 1 || port < 1024) {
-                                                fprintf(stderr, "Invalid port\n");
-                                            } else {
-                                                break;
-                                            }
-                                        }
-
-                                        // @todo check if it is linux
-
-                                        // Init socket
-                                        int fd = socket(AF_INET, SOCK_STREAM, 0);
-
-                                        if (fd < 0) {
-                                            perror("Socket creation failed\n");
-                                            goto cleanup_media;
-                                        }
-
-                                        if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
-                                            perror("Error setting O_NONBLOCK");
-                                            goto cleanup_media;
-                                        }
-
-                                        memset(&network.host_addr, 0, sizeof(network.host_addr));
-                                        network.host_addr.sin_family = AF_INET;
-                                        network.host_addr.sin_port = htons(port);
-                                        network.host_addr.sin_addr = addr;
-
-                                        // Bind/Connect
-                                        switch ((enum HostOrJoin)i) {
-                                            case HOST: {
-                                                is_host = true;
-
-                                                host.fd[0] = fd;
-                                                game_state.players_size = 1;
-
-                                                // @todo use select or poll?
-                                                if (bind(host.fd[0], (struct sockaddr*)&network.host_addr, sizeof(network.host_addr)) < 0) {
-                                                    perror("Bind failed");
-                                                    goto cleanup;
-                                                }
-
-                                                if (listen(host.fd[0], MAX_PLAYERS_SIZE) < 0) {
-                                                    perror("Listening failed");
-                                                    goto cleanup;
-                                                }
-
-                                                printf("Listening\n");
-                                            } break;
-                                            case JOIN: {
-                                                is_host = false;
-
-                                                client.fd = fd;
-
-                                                while (true) {
-                                                    if (connect(fd, (struct sockaddr*) &network.host_addr, sizeof(network.host_addr)) < 0
-                                                            && errno != EINPROGRESS) {
-                                                        perror("Failed to connect");
-                                                        goto cleanup;
-                                                    } else {
-                                                        break;
-                                                    }
-                                                }
-                                                readBytes(client.fd, &client.player_i, sizeof(client.player_i), true);
-
-                                                printf("Connected\n");
-                                            } break;
-                                        }
-
-                                        menu_mode = MN_LOBBY;
-
-                                        quit_mode = true;
-                                    }      
-                                }
-                            } break;
-                        } 
-                    }
-                } break;
-                case MN_LOBBY: {
-                    clearScreen();
-
-                    enum Type {
-                        START_GAME,
-                        UPDATE, 
-                    };
-
-                    struct Packet {
-                        enum Type type;
-                        size_t update_players_size;
-                    };
-
-                    if (is_host) {
-                        socklen_t len = sizeof(network.host_addr);
-                        int fd = accept(host.fd[0], (struct sockaddr*) &network.host_addr, &len);
-                        if (fd >= 0) {
-                            writeBytes(fd, &game_state.players_size, sizeof(game_state.players_size));
-
-                            if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
-                                perror("Error setting O_NONBLOCK");
-                                goto cleanup_media;
-                            }
-
-                            host.fd[game_state.players_size++] = fd;
-                        }
-
-                        if (curr_time > lobby.start + lobby.delay) {
-                            lobby.start = curr_time;
-                            for (size_t i = 1; i < game_state.players_size; i++) {
-                                struct Packet packet = {.type = UPDATE, .update_players_size = game_state.players_size};
-                                writeBytes(host.fd[i], &packet, sizeof(packet));
-                            }
-                        }
-                    } else {
-                        while (true) {
-                            struct Packet packet;
-                            if (!readBytes(client.fd, &packet, sizeof(packet), false)) {
-                                break;
-                            }
-
-                            switch (packet.type) {
-                                case UPDATE: {
-                                    game_state.players_size = packet.update_players_size;
-                                } break;
-                                case START_GAME: {
-                                    mode = RUNNING;
-                                } break;
-                            }
-                        }
-                    }
-
-                    // Render buttons
-                    enum {
-                        CONNECT_INFO_QTY = 4
-                    };
-
-                    enum {
-                        READY = CONNECT_INFO_QTY
-                    };
-
-                    char connect_info[CONNECT_INFO_QTY][24];
-                    {
-                        for (size_t i = 0; i < CONNECT_INFO_QTY; i++) {
-                            strcpy(connect_info[i], "Player 0: Not connected");
-                            connect_info[i][7] = '1' + i;
-                        }
-
-                        for (size_t i = 0; i < game_state.players_size; i++) {
-                            strcpy(&connect_info[i][10], "Connected");
-                        }
-                    }
-
-                    char* ready = "Ready";
-
-                    char* msgs[CONNECT_INFO_QTY+1];
-                    for (size_t i = 0; i < CONNECT_INFO_QTY+1; i++) {
-                        msgs[i] = connect_info[i];
-                    }
-                    msgs[CONNECT_INFO_QTY] = ready;
-
-                    SDL_Rect hitboxes[CONNECT_INFO_QTY+1];
-
-                    SDL_Color colors[CONNECT_INFO_QTY+1];
-                    for (size_t i = 0; i < CONNECT_INFO_QTY+1; i++) {
-                        colors[i] = menu.button_color;
-                    }
-
-                    renderMsgsCentered(msgs, CONNECT_INFO_QTY+1, hitboxes, colors);
-
-                    // Handle host events
-                    SDL_Event event;
-                    while (SDL_PollEvent(&event)) {
-                        switch (event.type) {
-                            case SDL_QUIT: {
-                                goto cleanup_media;
-                            } break;
-                            case SDL_MOUSEBUTTONDOWN: {
-                                if (is_host) {
-                                    struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
-                                    if (rectContainsPos(&hitboxes[READY], &mouse_pos)) {
-                                        mode = RUNNING;
-
-                                        for (size_t i = 1; i < game_state.players_size; i++) {
-                                            struct Packet packet = {.type = START_GAME};
-                                            writeBytes(host.fd[i], &packet, sizeof(packet));
-                                        }
-                                    }
-                                }
-                            } break;
-                        }
-                    }
-                } break;
-                case MN_MAIN_MENU: {
-
-#define MENU_BUTTONS_SIZE 3
-
-                    // clean screen
-                    clearScreen();
-
-                    // draw buttons
-                    enum Button {
-                        M_START,
-                        M_OPTIONS,
-                        M_BACK
-                    };
-
-                    char* msg[MENU_BUTTONS_SIZE] = {"Start", "Options", "Back"};
-
-                    if (already_running) {
-                        msg[0] = "Continue";
-                    }
-
-                    SDL_Color colors[MENU_BUTTONS_SIZE]; 
-                    for (size_t i = 0; i < MENU_BUTTONS_SIZE; i++) {
-                        colors[i] = menu.button_color;                
-                    }
-
-                    SDL_Rect hitbox[MENU_BUTTONS_SIZE];
-                    renderMsgsCentered(msg, MENU_BUTTONS_SIZE, hitbox, colors);
-
-                    // events
-                    SDL_Event event;
-                    while (SDL_PollEvent(&event)) {
-                        switch (event.type) {
-                            case SDL_QUIT: {
-                                goto cleanup_media; 
-                            } break;
-                            case SDL_KEYDOWN: {
-                                switch (event.key.keysym.sym) {
-                                    case SDLK_ESCAPE: {
-                                        if (already_running) {
-                                            mode = RUNNING;
-                                        } else {
-                                            menu_mode = MN_CHOOSE_NETWORK;
-                                        }
-                                    } break;
-                                }
-                            } break;
-                            case SDL_MOUSEBUTTONDOWN: {
-                                for (size_t i = 0; i < MENU_BUTTONS_SIZE; i++) {
-                                    struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
-                                    if (rectContainsPos(&hitbox[i], &mouse_pos)) {
-                                        switch ((enum Button)i) {
-                                            case M_START: {
-                                                mode = RUNNING;
-                                                already_running = true;
-                                            } break;
-                                            case M_OPTIONS: {
-                                                menu_mode = MN_OPTIONS_MENU;
-                                            } break;
-                                            case M_BACK: {
-                                                menu_mode = MN_CHOOSE_NETWORK;
-                                                reset(&game_state);
-                                                already_running = false;
-                                            } break;
-                                        }
-                                    }
-                                }
-                            } break;
-                        } 
-                    }
-                } break;
-                case MN_REMAP_MENU: {
-                    clearScreen();
-
-                    // Select player button
-                    SDL_Rect sel_player_hitbox;
-                    {
-                        char msg[9] = "Player 0";
-
-                        msg[7] = remap_menu.sel_player_i + 1 + '0';
-
-                        sel_player_hitbox.x = 0;
-                        sel_player_hitbox.y = 0;
-                        TTF_SizeText(font, msg, &sel_player_hitbox.w, &sel_player_hitbox.h);
-
-                        renderMsg(msg, &sel_player_hitbox, menu.button_color);
-                    }
-
-                    // Centered buttons
-#define REMAP_MENU_BUTTONS_SIZE 4
-
-                    SDL_Rect hitbox[REMAP_MENU_BUTTONS_SIZE];
-                    {
-                        char msg[REMAP_MENU_BUTTONS_SIZE][9];
-                        // It has to be in this order
-                        char* pre_msg[REMAP_MENU_BUTTONS_SIZE] = {
-                            "DOWN: 0",
-                            "LEFT: 0",
-                            "RIGHT: 0",
-                            "UP: 0"
-                        };
-
-                        for (size_t i = 0; i < REMAP_MENU_BUTTONS_SIZE; i++) {
-                            strcpy(msg[i], pre_msg[i]);
-                        }
-
-                        for (size_t i = 0; i < REMAP_MENU_BUTTONS_SIZE; i++) {
-                            size_t len = strlen(msg[i]);
-
-                            SDL_Keycode key = game_state.players[remap_menu.sel_player_i].bindings[i];
-
-                            if (key <= 0x7F) {
-                                msg[i][len-1] = (char)key;
-                            } else {
-                                switch (key) {
-                                    case SDLK_DOWN: {
-                                        msg[i][len-1] = 'v';
-                                    } break;
-                                    case SDLK_LEFT: {
-                                        msg[i][len-1] = '<';
-                                    } break;
-                                    case SDLK_RIGHT: {
-                                        msg[i][len-1] = '>';
-                                    } break;
-                                    case SDLK_UP: {
-                                        msg[i][len-1] = '^';
-                                    } break;
-                                }
-                            }
-                        }
-
-                        char* p_msg[REMAP_MENU_BUTTONS_SIZE];
-                        for (size_t i = 0; i < REMAP_MENU_BUTTONS_SIZE; i++) {
-                            p_msg[i] = msg[i]; 
-                        }
-
-                        SDL_Color colors[REMAP_MENU_BUTTONS_SIZE] = {
-                            menu.button_color,
-                            menu.button_color,
-                            menu.button_color,
-                            menu.button_color,
-                        };
-
-                        if (remap_menu.button_sel) colors[remap_menu.button_sel_i] = remap_menu.button_sel_color;
-
-                        renderMsgsCentered(p_msg, REMAP_MENU_BUTTONS_SIZE, hitbox, colors);
-                    }
-
-                    SDL_Event event;
-                    while (SDL_PollEvent(&event)) {
-                        switch (event.type) {
-                            case SDL_QUIT: {
-                                goto cleanup_media; 
-                            } break;
-                            case SDL_KEYDOWN: {
-                                if (event.key.keysym.sym == SDLK_ESCAPE) {
-                                    menu_mode = MN_OPTIONS_MENU;
-                                }
-                                if (remap_menu.button_sel) {
-                                    remap_menu.button_sel = false;
-                                    game_state.players[remap_menu.sel_player_i].bindings[remap_menu.button_sel_i] = event.key.keysym.sym;
-                                }
-                            } break;
-                            case SDL_MOUSEBUTTONDOWN: {
-                                struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
-                                bool pressed_button = false;
-                                for (size_t i = 0; i < REMAP_MENU_BUTTONS_SIZE; i++) {
-                                    if (!remap_menu.button_sel && rectContainsPos(&hitbox[i], &mouse_pos)) {
-                                        pressed_button = true;
-                                        remap_menu.button_sel = true;
-                                        remap_menu.button_sel_i = i;
-                                    } 
-                                }
-                                if (!pressed_button) {
-                                    remap_menu.button_sel = false;
-                                }
-
-                                if (rectContainsPos(&sel_player_hitbox, &mouse_pos)) {
-                                    remap_menu.sel_player_i++;
-                                    if (remap_menu.sel_player_i >= game_state.players_size) {
-                                        remap_menu.sel_player_i = 0;
-                                    }
-                                }
-                            } break;
-                        }
-                    }
-                } break;
-                case MN_OPTIONS_MENU: {
-                    clearScreen();
-
-#define OPTIONS_MENU_BUTTONS_SIZE 2
-
-                    SDL_Rect hitbox[OPTIONS_MENU_BUTTONS_SIZE];
-                    char msg[OPTIONS_MENU_BUTTONS_SIZE][11];
-
-                    enum Options {
-                        PLAYERS,
-                        REMAP
-                    };
-
-                    // It has to be in this order
-                    char* pre_msg[OPTIONS_MENU_BUTTONS_SIZE] = {
-                        "Players: 0",
-                        "Remap"
-                    };
-
-                    for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
-                        strcpy(msg[i], pre_msg[i]);
-                    }
-
-                    size_t len = strlen(msg[PLAYERS]);
-                    msg[PLAYERS][len-1] = game_state.players_size + '0';
-
-                    char* p_msg[OPTIONS_MENU_BUTTONS_SIZE];
-                    for (size_t i = 0; i < OPTIONS_MENU_BUTTONS_SIZE; i++) {
-                        p_msg[i] = msg[i]; 
-                    }
-
-                    SDL_Color colors[OPTIONS_MENU_BUTTONS_SIZE] = {
-                        menu.button_color,
-                        menu.button_color,
-                    };
-
-                    renderMsgsCentered(p_msg, OPTIONS_MENU_BUTTONS_SIZE, hitbox, colors);
-
-                    SDL_Event event;
-                    while (SDL_PollEvent(&event)) {
-                        switch (event.type) {
-                            case SDL_QUIT: {
-                                goto cleanup_media; 
-                            } break;
-                            case SDL_KEYDOWN: {
-                                if (event.key.keysym.sym == SDLK_ESCAPE) {
-                                    mode = MENU;
-                                }
-                                if (remap_menu.button_sel) {
-                                    remap_menu.button_sel = false;
-                                    game_state.players[remap_menu.sel_player_i].bindings[remap_menu.button_sel_i] = event.key.keysym.sym;
-                                }
-                            } break;
-                            case SDL_MOUSEBUTTONDOWN: {
-                                struct Pos mouse_pos = {.x = event.button.x, .y = event.button.y};
-                                if (rectContainsPos(&hitbox[PLAYERS], &mouse_pos)) {
-                                    game_state.players_size++;
-                                    if (game_state.players_size > MAX_PLAYERS_SIZE) {
-                                        game_state.players_size = 1;
-                                    }
-                                }
-                                if (rectContainsPos(&hitbox[REMAP], &mouse_pos)) {
-                                    menu_mode = MN_REMAP_MENU;
-                                }
-                            } break;
-                        }
-                    }
-                } break;
+            if (!runMenu()) {
+                goto cleanup_media;
             }
         } break;
         case RUNNING: {
-            bool all_died = true;
-            for (size_t i = 0; i < game_state.players_size; i++) {
-                if (!game_state.players[i].game_over) all_died = false;
-            }
-
-            if (all_died) {
-                mode = GAME_OVER;
-                game_over.start = curr_time;
-                already_running = false;
-            }
-
-            // ==========
-            // Input
-            // ==========
-            
-            // Get online directions
-            if (is_online && is_host) {
-                for (size_t i = 1; i < game_state.players_size; i++) {
-                    while (true) {
-                        enum Direction direc;
-                        if (!readBytes(host.fd[i], &direc, sizeof(direc), false)) {
-                            break;
-                        }
-                        addDirection(&game_state.players[i], direc);
-                    }
-                }
-            }
-
-            SDL_Event event;
-            while (SDL_PollEvent(&event)) {
-                switch (event.type) {
-                case SDL_QUIT: {
-                    goto cleanup_media;
-                } break;
-                case SDL_KEYDOWN: {
-                    SDL_Keycode key = event.key.keysym.sym;
-
-                    if (is_online) {
-                        if (is_host) {
-                            enum Direction direc;
-                            if (mapKeycode(game_state.players[0].bindings, key, &direc)) {
-                                addDirection(&game_state.players[0], direc);
-                            }
-                        } else {
-                            enum Direction direc;
-                            if (mapKeycode(game_state.players[client.player_i].bindings, event.key.keysym.sym, &direc)) {
-                                writeBytes(client.fd, &direc, sizeof(direc));
-                            }
-                        }
-                    } else {
-                        if (event.key.keysym.sym == SDLK_ESCAPE) {
-                            mode = MENU;
-                        } else {
-                            for (size_t i = 0; i < game_state.players_size; i++) {
-                                if (!game_state.players[i].game_over) {
-                                    enum Direction direc;
-                                    if (mapKeycode(game_state.players[i].bindings, event.key.keysym.sym, &direc)) {
-                                        addDirection(&game_state.players[i], direc);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } break;
-                }
-            }
-
-            // Update
-            if (!(is_online && !is_host)) {
-                gameStateUpdate(&game_state, curr_time);
-            }
-
-            if (is_online) {
-                if (is_host) {
-                    for (size_t i = 1; i < game_state.players_size; i++) {
-                        writeBytes(host.fd[i], &game_state, sizeof(game_state));
-                    }
-                } else {
-                    struct GameState temp;
-                    if (readBytes(client.fd, &temp, sizeof(temp), false)) {
-                        game_state = temp;
-                    }
-                }
-            } 
-
-            // Render
-            for (size_t i = 0; i < game_state.players_size; i++) {
-                if (game_state.players[i].score > 999) {
-                    fprintf(stderr, "Score too big!\n");
-                    goto cleanup_media;
-                }
-            }
-
-            render(&game_state);
+            runRunning();
         } break;
         case GAME_OVER: {
-            SDL_Event event;
-            while (SDL_PollEvent(&event)) {
-                switch (event.type) {
-                case SDL_QUIT: {
-                    goto cleanup_media; 
-                } break;
-                }
-            }
-
-            if (curr_time - game_over.start > game_over.delay) {
-                mode = MENU;
-                menu_mode = MN_MAIN_MENU;
-                reset(&game_state);
-            }
-
-            SDL_Color font_color = {0xFF, 0x00, 0, 255};
-
-            int max_score = 0;
-            size_t winner;
-            bool draw = false;
-            for (size_t i = 0; i < game_state.players_size; i++) {
-                if (i == 0) max_score = game_state.players[i].score;
-                else if (game_state.players[i].score == max_score) {
-                    draw = true;
-                } else if (game_state.players[i].score > max_score) {
-                    max_score = game_state.players[i].score;
-                    winner = i;
-                    draw = false;
-                }     
-            }
-
-            char msg[14];
-
-            if (draw) strcpy(msg, "Draw");
-            else {
-                strcpy(msg, "Player 0 wins"); 
-                msg[7] = winner + 1 + '0';
-            }
-
-            SDL_Surface* game_over_surf = TTF_RenderText_Solid(font, msg, font_color);
-            SDL_Texture* game_over_text = SDL_CreateTextureFromSurface(renderer, game_over_surf);
-            SDL_FreeSurface(game_over_surf);
-
-            SDL_Rect game_over_rect;
-            TTF_SizeText(font, msg, &game_over_rect.w, &game_over_rect.h);
-            game_over_rect.x = WINDOW_WIDTH/2 - game_over_rect.w/2;
-            game_over_rect.y = WINDOW_HEIGHT/2 - game_over_rect.h/2;
-            SDL_RenderCopy(renderer, game_over_text, NULL, &game_over_rect);
-
-            SDL_DestroyTexture(game_over_text);
+            runGameOver();
         }; break;
         }
 
