@@ -69,21 +69,22 @@ void printSdlError(char* message) {
     fprintf(stderr, ": %s\n", SDL_GetError());
 }
 
+void errnoAbort(char* message) {
+    perror(message);
+    exit(-1);
+}
+
 // posix check error
 int pcr(int ret, char* message) {
-    if (ret < 0 && !(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
-        perror(message);
-        exit(-1);
-    }
+    if (ret < 0) errnoAbort(message);
+
     return ret;
 }
 
 // posix check pointer
 void* pcp(void* p, char* message) {
-    if (!p) {
-        perror(message);
-        exit(-1);
-    }
+    if (!p) errnoAbort(message);
+
     return p;
 }
 
@@ -94,7 +95,7 @@ bool init() {
     if (IMG_Init(IMG_INIT_PNG) != IMG_INIT_PNG) return_defer(false);
     if (TTF_Init() != 0) return_defer(false);
         
-    window = SDL_CreateWindow("Titulo",
+    window = SDL_CreateWindow("Snake Game",
         0, 0,
         WINDOW_WIDTH, WINDOW_HEIGHT, 0
     );
@@ -639,29 +640,30 @@ bool readBytes(int fd, void* data, size_t data_size, bool wait) {
 
     while (true) {
         ssize_t bytes = recv(fd, data, data_size, MSG_PEEK); 
-        pcr(bytes, "Reading error");
+        assert(bytes <= (ssize_t)data_size);
 
+        if (bytes < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (wait) continue;
+                else return false;
+            } else {
+                errnoAbort("Read failed");
+            }
+        }
+        
         if (bytes == 0) {
             fprintf(stderr, "Disconnected\n");
             exit(-1);
-        } else if (bytes > (ssize_t)data_size) {
-            assert(false && "Too many bytes");
         }
         
-        if (bytes < (ssize_t)data_size) {
-            if (!wait) {
-                return false;
-            }
-        } else if (bytes == (ssize_t)data_size) {
-            read(fd, data, data_size);
-            return true;
-        }
+        read(fd, data, data_size);
+        return true;
     }
 }
 
 void writeBytes(int fd, void* data, size_t data_size) {
     int ret = send(fd, data, data_size, MSG_NOSIGNAL);
-    pcr(ret, "Writing error");
+    pcr(ret, "Write error");
 }
 
 struct Input {
@@ -917,9 +919,13 @@ bool runMenu() {
                         while (true) {
                             // Original: if errno == EINPROGRESS || connect >= 0 break
                             int result = connect(fd, (struct sockaddr*) &network.host_addr, sizeof(network.host_addr));
-                            pcr(result, "Failed to connect");
 
-                            if (result >= 0) break;
+                            if (result < 0) {
+                                if (errno == EINPROGRESS) continue;
+                                else errnoAbort("Connection failed");
+                            }
+
+                            break;
                         }
                         readBytes(client.fd, &client.player_i, sizeof(client.player_i), true);
 
@@ -1296,8 +1302,11 @@ void runRunning() {
                 writeBytes(host.fd[i], &game_state, sizeof(game_state));
             }
         } else {
-            struct GameState temp;
-            if (readBytes(client.fd, &temp, sizeof(temp), false)) {
+            while (true) {
+                struct GameState temp;
+                if (!readBytes(client.fd, &temp, sizeof(temp), false)) {
+                    break;
+                }
                 game_state = temp;
             }
         }
