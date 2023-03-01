@@ -37,17 +37,19 @@
 #define SPEEDUP_RATE 0.05
 #define MIN_MOVEM_DELAY 80
 
-SDL_Window* window;
-SDL_Renderer* renderer;
-TTF_Font* font; 
-SDL_Texture* head_text;
-SDL_Texture* body_text;
+SDL_Window* window = NULL;
+SDL_Renderer* renderer = NULL;
+TTF_Font* font = NULL; 
+SDL_Texture* head_text = NULL;
+SDL_Texture* body_text = NULL;
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 #define GRID_DIMENS MIN(WINDOW_WIDTH, WINDOW_HEIGHT)
 #define GRID_X0 (WINDOW_WIDTH / 2 - GRID_DIMENS / 2)
 #define GRID_Y0 (WINDOW_HEIGHT / 2 - GRID_DIMENS / 2)
+
+#define return_defer(x) do {ret = x; goto defer;} while(0)
 
 struct Pos {
     int x;
@@ -62,73 +64,75 @@ enum Direction {
 };
 
 void printSdlError(char* message) {
-    fputs(">> ", stderr);
-    fputs(message, stderr);
+    fprintf(stderr, "Error ");
+    fprintf(stderr, "%s", message);
     fprintf(stderr, ": %s\n", SDL_GetError());
 }
 
+// posix check error
+int pcr(int ret, char* message) {
+    if (ret < 0 && !(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
+        perror(message);
+        exit(-1);
+    }
+    return ret;
+}
+
+// posix check pointer
+void* pcp(void* p, char* message) {
+    if (!p) {
+        perror(message);
+        exit(-1);
+    }
+    return p;
+}
+
 bool init() {
-    if (SDL_Init(SDL_INIT_EVERYTHING) != 0) {
-        printSdlError("SDL_Init error");
-        return false;
-    }
+    bool ret = true;
 
-    if (IMG_Init(IMG_INIT_PNG) != IMG_INIT_PNG) {
-        printSdlError("IMG_INIT error");
-        return false;
-    }
-
-    if (TTF_Init() != 0) {
-        printSdlError("TTL_Init");
-        return false;
-    }
+    if (SDL_Init(SDL_INIT_EVERYTHING) != 0) return_defer(false);
+    if (IMG_Init(IMG_INIT_PNG) != IMG_INIT_PNG) return_defer(false);
+    if (TTF_Init() != 0) return_defer(false);
         
     window = SDL_CreateWindow("Titulo",
         0, 0,
         WINDOW_WIDTH, WINDOW_HEIGHT, 0
     );
-    if (!window) {
-       printSdlError("SDL_CreateWindow"); 
-       return false;
-    }
+    if (!window) return_defer(false);
 
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) {
-        printSdlError("SDL_CreateRenderer");
-        return false;
-    }
+    if (!renderer) return_defer(false);
 
-    return true;
+defer:
+    if (!ret) printSdlError("init");
+    return ret;
 }
 
 bool loadMedia() {
-    // Load font
+    bool ret = true;
+
     font = TTF_OpenFont("COMIC.TTF", 24);
-    if (!font) {
-        printSdlError("Loading COMIC.TTF");
-        return false;
-    }
+    if (!font) return_defer(false);
 
     SDL_Surface* head_surf = IMG_Load("head.png");
-    if (!head_surf) {
-        printSdlError("Loading head.png");
-        TTF_CloseFont(font);
-        return false;
-    }
+    if (!head_surf) return_defer(false);
+
     head_text = SDL_CreateTextureFromSurface(renderer, head_surf);
     SDL_FreeSurface(head_surf);
 
+    if (!head_text) return_defer(false);
+
     SDL_Surface* body_surf = IMG_Load("body.png");
-    if (!body_surf) {
-        printSdlError("Loading body.png");
-        SDL_DestroyTexture(head_text);
-        TTF_CloseFont(font);
-        return false;
-    }
+    if (!body_surf) return_defer(false);
+
     body_text = SDL_CreateTextureFromSurface(renderer, body_surf);
     SDL_FreeSurface(body_surf);
 
-    return true;
+    if (!body_text) return_defer(false);
+
+defer:
+    if (!ret) printSdlError("load media");
+    return ret;
 }
 
 #define POWERUP_SIZE 3
@@ -526,7 +530,8 @@ void renderPlayersScore(struct Player* players, size_t players_size) {
 enum Mode {
     RUNNING,   
     MENU,
-    GAME_OVER
+    GAME_OVER,
+    QUIT_GAME
 };
 
 enum MenuMode {
@@ -634,13 +639,11 @@ bool readBytes(int fd, void* data, size_t data_size, bool wait) {
 
     while (true) {
         ssize_t bytes = recv(fd, data, data_size, MSG_PEEK); 
+        pcr(bytes, "Reading error");
 
-        if ((bytes < 0 && !(errno == EAGAIN || errno == EWOULDBLOCK))) {
-            perror("Error reading");
-            assert(false);
-        } else if (bytes == 0) {
+        if (bytes == 0) {
             fprintf(stderr, "Disconnected\n");
-            assert(false);
+            exit(-1);
         } else if (bytes > (ssize_t)data_size) {
             assert(false && "Too many bytes");
         }
@@ -657,17 +660,13 @@ bool readBytes(int fd, void* data, size_t data_size, bool wait) {
 }
 
 void writeBytes(int fd, void* data, size_t data_size) {
-    int ret = write(fd, data, data_size);
-
-    if (ret < 0) {
-        perror("Error writing");
-        assert(false);
-    }
+    int ret = send(fd, data, data_size, MSG_NOSIGNAL);
+    pcr(ret, "Writing error");
 }
 
 struct Input {
     struct Pos mouse_pos;
-    bool is_button_clicked;
+    bool is_mouse_clicked;
     bool is_key_pressed;
     SDL_Keycode key_pressed;
     bool letters_pressed[26];
@@ -689,7 +688,7 @@ bool getInput(struct Input* input) {
         case SDL_MOUSEBUTTONDOWN: {
             input->mouse_pos.x = event.button.x;
             input->mouse_pos.y = event.button.y;
-            input->is_button_clicked = true;
+            input->is_mouse_clicked = true;
         } break;
         case SDL_KEYDOWN: {
             SDL_Keycode key = event.key.keysym.sym;
@@ -771,6 +770,50 @@ uint32_t curr_time;
 
 struct Input input;
 
+void getAddrAndPort(struct in_addr* addr, uint16_t* port) {
+    // Get IP
+    // @todo get max(ipv4.len, ipv6.len)
+    while (true) {
+        printf("Enter the IP address: ");
+        char ip[INET_ADDRSTRLEN];
+
+        char format[6] = " %00s";
+        sprintf(format, " %%%ds", INET_ADDRSTRLEN-1);
+
+        int result = scanf(format, ip);
+
+        if (result != 1) {
+            while (getchar() != '\n') {}
+            printf("Invalid input\n");
+            continue;
+        }
+
+        result = inet_pton(AF_INET, ip, addr);
+        pcr(result, "inet_pton failed");
+
+        if (result == 0) {
+            printf("Invalid IP\n");     
+            continue;
+        }
+
+        break;
+    }
+
+    // Get port
+    while (true) {
+        printf("Choose a port: ");                                  
+
+        // @todo ub in case of overflow
+        int res = scanf("%hu", port);
+
+        if (res != 1 || *port < 1024) {
+            printf("Invalid port\n");
+        } else {
+            break;
+        }
+    }
+}
+
 bool runMenu() {
     clearScreen();
 
@@ -789,7 +832,7 @@ bool runMenu() {
 
         renderMsgsCentered(msgs, BUTTONS_QTY, hitboxes, colors);
 
-        if (input.is_button_clicked) {
+        if (input.is_mouse_clicked) {
             for (size_t i = 0; i < BUTTONS_QTY; i++) {
                 if (rectContainsPos(&hitboxes[i], &input.mouse_pos)) {
                     switch ((enum Options)i) {
@@ -802,7 +845,7 @@ bool runMenu() {
                         menu_mode = MN_HOST_OR_JOIN;
                     } break;
                     case QUIT: {
-                        return false;
+                        mode = QUIT_GAME;
                     } break;
                     }  
                 } 
@@ -826,63 +869,21 @@ bool runMenu() {
 
         renderMsgsCentered(msgs, BUTTONS_QTY, hitboxes, colors);
 
-        if (input.is_button_clicked) {
+        if (input.is_mouse_clicked) {
             for (size_t i = 0; i < BUTTONS_QTY; i++) {
                 if (rectContainsPos(&hitboxes[i], &input.mouse_pos)) {
-                    // Get IP
-                    // @todo get max(ipv4.len, ipv6.len)
-
                     struct in_addr addr;
-                    while (true) {
-                        printf("Enter the IP address: ");
-                        char ip[51];
-                        int s_ret = scanf(" %50s", ip);
-
-                        if (s_ret != 1) {
-                            while (getchar() != '\n') {}
-                        }
-
-                        int ret = inet_pton(AF_INET, ip, &addr);
-
-                        if (ret == -1) {
-                            fprintf(stderr, "inet_pton invalid address family\n");
-                            exit(-1);
-                        } else if (ret == 0) {
-                            printf("Invalid IP\n");     
-                        } else {
-                            break;
-                        }
-                    }
-
-                    // Get port
                     uint16_t port;
-                    while (true) {
-                        printf("Choose a port: ");                                  
-
-                        // @todo ub in case of overflow
-                        int res = scanf("%hu", &port);
-
-                        if (res != 1 || port < 1024) {
-                            fprintf(stderr, "Invalid port\n");
-                        } else {
-                            break;
-                        }
-                    }
+                    getAddrAndPort(&addr, &port);
 
                     // @todo check if it is linux
-
                     // Init socket
                     int fd = socket(AF_INET, SOCK_STREAM, 0);
+                    pcr(fd, "Socket creation failed");
 
-                    if (fd < 0) {
-                        perror("Socket creation failed\n");
-                        exit(-1);
-                    }
-
-                    if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
-                        perror("Error setting O_NONBLOCK");
-                        exit(-1);
-                    }
+                    pcr(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK),
+                            "Error setting O_NONBLOCK"
+                       );
 
                     memset(&network.host_addr, 0, sizeof(network.host_addr));
                     network.host_addr.sin_family = AF_INET;
@@ -898,15 +899,13 @@ bool runMenu() {
                         game_state.players_size = 1;
 
                         // @todo use select or poll?
-                        if (bind(host.fd[0], (struct sockaddr*)&network.host_addr, sizeof(network.host_addr)) < 0) {
-                            perror("Bind failed");
-                            exit(-1);
-                        }
+                        pcr(bind(host.fd[0], (struct sockaddr*)&network.host_addr, sizeof(network.host_addr)),
+                                "Bind failed"
+                           );
 
-                        if (listen(host.fd[0], MAX_PLAYERS_SIZE) < 0) {
-                            perror("Listening failed");
-                            exit(-1);
-                        }
+                        pcr(listen(host.fd[0], MAX_PLAYERS_SIZE),
+                                "Listening failed"
+                           );
 
                         printf("Listening\n");
                     } break;
@@ -916,13 +915,11 @@ bool runMenu() {
                         client.fd = fd;
 
                         while (true) {
-                            if (connect(fd, (struct sockaddr*) &network.host_addr, sizeof(network.host_addr)) < 0
-                                    && errno != EINPROGRESS) {
-                                perror("Failed to connect");
-                                exit(-1);
-                            } else {
-                                break;
-                            }
+                            // Original: if errno == EINPROGRESS || connect >= 0 break
+                            int result = connect(fd, (struct sockaddr*) &network.host_addr, sizeof(network.host_addr));
+                            pcr(result, "Failed to connect");
+
+                            if (result >= 0) break;
                         }
                         readBytes(client.fd, &client.player_i, sizeof(client.player_i), true);
 
@@ -952,10 +949,9 @@ bool runMenu() {
             if (fd >= 0) {
                 writeBytes(fd, &game_state.players_size, sizeof(game_state.players_size));
 
-                if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK) < 0) {
-                    perror("Error setting O_NONBLOCK");
-                    exit(-1);
-                }
+                pcr(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK),
+                        "Error setting O_NONBLOCK"
+                   );
 
                 host.fd[game_state.players_size++] = fd;
             }
@@ -1013,7 +1009,7 @@ bool runMenu() {
 
         renderMsgsCentered(msgs, MAX_PLAYERS_SIZE+1, hitboxes, colors);
 
-        if (input.is_button_clicked) {
+        if (input.is_mouse_clicked) {
             if (is_host) {
                 if (rectContainsPos(&hitboxes[READY_BUTTON], &input.mouse_pos)) {
                     mode = RUNNING;
@@ -1042,7 +1038,7 @@ bool runMenu() {
         SDL_Rect hitboxes[BUTTONS_QTY];
         renderMsgsCentered(msg, BUTTONS_QTY, hitboxes, colors);
 
-        if (input.is_button_clicked) {
+        if (input.is_mouse_clicked) {
             for (size_t i = 0; i < BUTTONS_QTY; i++) {
                 if (rectContainsPos(&hitboxes[i], &input.mouse_pos)) {
                     switch ((enum Button)i) {
@@ -1142,7 +1138,7 @@ bool runMenu() {
         }
 
         // Events
-        if (input.is_button_clicked) {
+        if (input.is_mouse_clicked) {
             bool pressed_button = false;
             for (size_t i = 0; i < BUTTONS_QTY; i++) {
                 if (!remap_menu.button_sel && rectContainsPos(&hitbox[i], &input.mouse_pos)) {
@@ -1213,7 +1209,7 @@ bool runMenu() {
                 game_state.players[remap_menu.sel_player_i].bindings[remap_menu.button_sel_i] = input.key_pressed;
             }
         }
-        if (input.is_button_clicked) {
+        if (input.is_mouse_clicked) {
             if (rectContainsPos(&hitbox[PLAYERS], &input.mouse_pos)) {
                 game_state.players_size++;
                 if (game_state.players_size > MAX_PLAYERS_SIZE) {
@@ -1226,6 +1222,7 @@ bool runMenu() {
         }
     } break;
     }
+
     return true;
 }
 
@@ -1360,14 +1357,16 @@ void runGameOver() {
 }
 
 int main() {
+    int ret = 0;
+
     srand(time(NULL));
 
     if (!init()) {
-        goto cleanup; 
+        return_defer(-1);
     }
 
     if (!loadMedia()) {
-        goto cleanup;
+        return_defer(-1);
     }
 
     reset(&game_state);
@@ -1390,14 +1389,13 @@ int main() {
 
         memset(&input, 0, sizeof(input));
         if (!getInput(&input)) {
-            // @todo improve cleanup method
-            goto cleanup_media;
+            return_defer(0);
         }
 
         switch (mode) {
         case MENU: {
             if (!runMenu()) {
-                goto cleanup_media;
+                return_defer(-1);
             }
         } break;
         case RUNNING: {
@@ -1405,26 +1403,26 @@ int main() {
         } break;
         case GAME_OVER: {
             runGameOver();
-        }; break;
+        } break;
+        case QUIT_GAME: {
+            return_defer(0);
+        } break;
         }
 
         SDL_RenderPresent(renderer);
         SDL_Delay(1000 / 60);
     }
 
-    // =============
-    // Cleanup
-    // =============
-cleanup_media:
-    SDL_DestroyTexture(body_text);
-    SDL_DestroyTexture(head_text);
-    TTF_CloseFont(font);
+defer:
+    if (body_text) SDL_DestroyTexture(body_text);
+    if (head_text) SDL_DestroyTexture(head_text);
+    if (font) TTF_CloseFont(font);
 
-cleanup:
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
+    if (renderer) SDL_DestroyRenderer(renderer);
+    if (window) SDL_DestroyWindow(window);
+
     TTF_Quit();
     IMG_Quit();
     SDL_Quit();
-    return 0;
+    return ret;
 }
