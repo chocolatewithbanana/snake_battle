@@ -7,13 +7,22 @@
 #include <stdbool.h>
 #include <inttypes.h>
 
-#ifdef __linux__
+#if defined(_WIN64) || defined(_WIN32)
+#define WINDOWS
+#endif
+
+#if defined(__linux__)
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#elif defined(WINDOWS)
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <Ws2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib")
 #endif
 
 #include <SDL2/SDL.h>
@@ -656,14 +665,22 @@ bool readBytes(int fd, void* data, size_t data_size, bool wait) {
             exit(-1);
         }
         
-        read(fd, data, data_size);
+        recv(fd, data, data_size, 0);
         return true;
     }
 }
 
 void writeBytes(int fd, void* data, size_t data_size) {
-    int ret = send(fd, data, data_size, MSG_NOSIGNAL);
-    pcr(ret, "Write error");
+    size_t bytes_sent = 0;
+    while (bytes_sent < data_size) {
+        int ret = send(fd, (uint8_t*)data+bytes_sent, data_size-bytes_sent, MSG_NOSIGNAL);
+        if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            continue;
+        }
+        pcr(ret, "Write error");
+
+        bytes_sent += ret; 
+    }
 }
 
 struct Input {
@@ -1377,6 +1394,14 @@ void runGameOver() {
 }
 
 int main() {
+#ifdef WINDOWS
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != NO_ERROR) {
+        fprintf("WSAStartup failed: %d\n", WSAGetLastError());
+        exit(EXIT_FAILURE);
+    }
+#endif
+
     int ret = 0;
 
     srand(time(NULL));
@@ -1434,6 +1459,10 @@ int main() {
     }
 
 defer:
+#ifdef WINDOWS
+    WSACleanup();
+#endif
+
     if (body_text) SDL_DestroyTexture(body_text);
     if (head_text) SDL_DestroyTexture(head_text);
     if (font) TTF_CloseFont(font);
