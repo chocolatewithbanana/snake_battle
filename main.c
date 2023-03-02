@@ -651,15 +651,14 @@ bool readBytes(int fd, void* data, size_t data_size, bool wait) {
         ssize_t bytes = recv(fd, data, data_size, MSG_PEEK); 
         assert(bytes <= (ssize_t)data_size);
 
-        if (bytes < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                if (wait) continue;
-                else return false;
-            } else {
-                errnoAbort("Read failed");
-            }
+        if ((bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            || (0 < bytes && bytes < (ssize_t)data_size)) {
+            if (wait) continue;
+            else return false;
         }
-        
+
+        pcr(bytes, "read failed");
+
         if (bytes == 0) {
             fprintf(stderr, "Disconnected\n");
             exit(-1);
