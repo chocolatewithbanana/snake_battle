@@ -816,6 +816,18 @@ void getAddrAndPort(struct in_addr* addr, uint16_t* port) {
     }
 }
 
+void block(int fd) {
+    pcr(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) & ~O_NONBLOCK),
+        "Error setting O_NONBLOCK"
+       );
+}
+
+void unblock(int fd) {
+    pcr(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK),
+        "Error setting O_NONBLOCK"
+       );
+}
+
 bool runMenu() {
     clearScreen();
 
@@ -883,10 +895,6 @@ bool runMenu() {
                     int fd = socket(AF_INET, SOCK_STREAM, 0);
                     pcr(fd, "Socket creation failed");
 
-                    pcr(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK),
-                            "Error setting O_NONBLOCK"
-                       );
-
                     memset(&network.host_addr, 0, sizeof(network.host_addr));
                     network.host_addr.sin_family = AF_INET;
                     network.host_addr.sin_port = htons(port);
@@ -899,6 +907,8 @@ bool runMenu() {
 
                         host.fd[0] = fd;
                         game_state.players_size = 1;
+
+                        unblock(host.fd[0]);
 
                         // @todo use select or poll?
                         pcr(bind(host.fd[0], (struct sockaddr*)&network.host_addr, sizeof(network.host_addr)),
@@ -927,9 +937,10 @@ bool runMenu() {
 
                             break;
                         }
-                        readBytes(client.fd, &client.player_i, sizeof(client.player_i), true);
-
                         printf("Connected\n");
+                        unblock(client.fd);
+
+                        readBytes(client.fd, &client.player_i, sizeof(client.player_i), true);
                     } break;
                     }
 
