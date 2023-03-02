@@ -104,7 +104,7 @@ bool init() {
     if (IMG_Init(IMG_INIT_PNG) != IMG_INIT_PNG) return_defer(false);
     if (TTF_Init() != 0) return_defer(false);
         
-    window = SDL_CreateWindow("Snake Game",
+    window = SDL_CreateWindow("Snake Battle",
         0, 0,
         WINDOW_WIDTH, WINDOW_HEIGHT, 0
     );
