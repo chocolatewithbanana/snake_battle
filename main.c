@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <inttypes.h>
+#include <errno.h>
 
 #if defined(_WIN64) || defined(_WIN32)
 #define WINDOWS
@@ -18,16 +19,18 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
-#elif defined(WINDOWS)
-#define WIN32_LEAN_AND_MEAN
-#include <winsock2.h>
-#include <Ws2tcpip.h>
-#pragma comment(lib, "Ws2_32.lib")
-#endif
-
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_ttf.h>
+#elif defined(WINDOWS)
+#include <SDL.h>
+#include <SDL_image.h>
+#include <SDL_ttf.h>
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+//#pragma comment(lib, "Ws2_32.lib")
+#endif
 
 //#include "menu.h"
 
@@ -48,7 +51,7 @@
 
 SDL_Window* window = NULL;
 SDL_Renderer* renderer = NULL;
-TTF_Font* font = NULL; 
+TTF_Font* font = NULL;
 SDL_Texture* head_text = NULL;
 SDL_Texture* body_text = NULL;
 
@@ -103,9 +106,9 @@ bool init() {
     if (SDL_Init(SDL_INIT_EVERYTHING) != 0) return_defer(false);
     if (IMG_Init(IMG_INIT_PNG) != IMG_INIT_PNG) return_defer(false);
     if (TTF_Init() != 0) return_defer(false);
-        
+
     window = SDL_CreateWindow("Snake Battle",
-        0, 0,
+        100, 100,
         WINDOW_WIDTH, WINDOW_HEIGHT, 0
     );
     if (!window) return_defer(false);
@@ -163,7 +166,7 @@ void appleInit(struct Apple* p_apple) {
     p_apple->pos.y = rand() % GRID_SIZE;
 
     int odds[POWERUP_SIZE];
-    odds[NONE] = 10; 
+    odds[NONE] = 10;
     odds[ZOMBIE] = 1;
     odds[SONIC] = 1;
 
@@ -210,7 +213,7 @@ struct Player {
 
     struct Pos pos;
     struct Pos body[BODY_SIZE];
-    size_t body_size; 
+    size_t body_size;
 
     enum Direction direc;
     enum Direction direc_buff[DIREC_BUFFER_SIZE];
@@ -238,7 +241,7 @@ void playerInit(struct Player* p_player) {
     p_player->pos.y = 0;
 
     p_player->body_size = 0;
-    
+
     p_player->direc = RIGHT;
     p_player->direc_size = 0;
     p_player->direc_i = 0;
@@ -301,7 +304,7 @@ void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
         }
 
         if (curr_time - game_state->players[i].last_movem_frame > movem_delay) {
-            move[i] = true;  
+            move[i] = true;
         }
     }
 
@@ -370,10 +373,10 @@ void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
                     game_state->players[p_i].sonic_end = curr_time + game_state->players[p_i].sonic_duration;
                 } break;
                 }
-                
+
                 appleInit(&game_state->apple_spawner.apples[a_i]);
 
-                game_state->players[p_i].body_size++; 
+                game_state->players[p_i].body_size++;
             }
         }
     }
@@ -381,11 +384,11 @@ void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
     // Move body and zombie
     for (size_t p_i = 0; p_i < game_state->players_size; p_i++) {
         if (game_state->players[p_i].game_over || !move[p_i]) continue;
-    
+
         // Move body
         if (game_state->players[p_i].body_size > 0) {
             for (size_t b_i = game_state->players[p_i].body_size-1; b_i > 0; b_i--) {
-                game_state->players[p_i].body[b_i] = game_state->players[p_i].body[b_i-1]; 
+                game_state->players[p_i].body[b_i] = game_state->players[p_i].body[b_i-1];
             }
             game_state->players[p_i].body[0] = last_pos[p_i];
         }
@@ -407,17 +410,17 @@ void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
 
         for (size_t other_i = 0; other_i < game_state->players_size; other_i++) {
             if (this_i != other_i
-                    && game_state->players[this_i].pos.x == game_state->players[other_i].pos.x 
+                    && game_state->players[this_i].pos.x == game_state->players[other_i].pos.x
                     && game_state->players[this_i].pos.y == game_state->players[other_i].pos.y) {
                 game_state->players[this_i].game_over = true;
             }
 
             for (size_t k = 0; k < game_state->players[other_i].body_size; k++) {
                 struct Pos* p_body = &game_state->players[other_i].body[k];
-                
+
                 if (game_state->players[this_i].pos.x == p_body->x && game_state->players[this_i].pos.y == p_body->y) {
                     game_state->players[this_i].game_over = true;
-                }    
+                }
             }
         }
 
@@ -433,7 +436,7 @@ void gameStateUpdate(struct GameState* game_state, uint32_t curr_time) {
     if (curr_time - game_state->apple_spawner.last_spawn_frame > game_state->apple_spawner.spawn_delay) {
         game_state->apple_spawner.last_spawn_frame = curr_time;
         appleInit(&game_state->apple_spawner.apples[game_state->apple_spawner.apples_size++]);
-    } 
+    }
 }
 
 void renderMsg(char* msg, SDL_Rect* hitbox, SDL_Color color) {
@@ -456,8 +459,8 @@ void renderMsgsCentered(char** texts, size_t button_qty, SDL_Rect* hitbox, SDL_C
         TTF_SizeText(font, texts[i], NULL, &h);
         total_height += h;
     }
-    
-    int y = WINDOW_HEIGHT/2 - total_height/2; 
+
+    int y = WINDOW_HEIGHT/2 - total_height/2;
 
     assert(y >= 0);
 
@@ -469,7 +472,7 @@ void renderMsgsCentered(char** texts, size_t button_qty, SDL_Rect* hitbox, SDL_C
 
         renderMsg(texts[i], &button_rect, colors[i]);
 
-        y += button_rect.h; 
+        y += button_rect.h;
         hitbox[i] = button_rect;
     }
 }
@@ -509,7 +512,7 @@ void playerRenderHead(struct Player* p_player) {
         rotation = 0;
     } break;
     }
-    
+
     SDL_RenderCopyEx(renderer, head_text, NULL, &head_rect, rotation, NULL, 0);
 }
 
@@ -518,7 +521,7 @@ void renderPlayersScore(struct Player* players, size_t players_size) {
 
     char message[] = "Player 1: 000";
     size_t len = strlen(message);
-    
+
     for (size_t i = 0; i < players_size; i++) {
         message[7] = (i + 1) + '0';
 
@@ -538,7 +541,7 @@ void renderPlayersScore(struct Player* players, size_t players_size) {
 }
 
 enum Mode {
-    RUNNING,   
+    RUNNING,
     MENU,
     GAME_OVER,
     QUIT_GAME
@@ -563,14 +566,14 @@ void reset(struct GameState* game_state) {
         {0, 0},
         {GRID_SIZE-1, 0},
         {0, GRID_SIZE-1},
-        {GRID_SIZE-1, GRID_SIZE-1} 
+        {GRID_SIZE-1, GRID_SIZE-1}
     };
 
     enum Direction init_direc[MAX_PLAYERS_SIZE] = {
         RIGHT,
         LEFT,
         RIGHT,
-        LEFT  
+        LEFT
     };
 
     for (size_t i = 0; i < MAX_PLAYERS_SIZE; i++) {
@@ -648,22 +651,33 @@ bool readBytes(int fd, void* data, size_t data_size, bool wait) {
     assert(data_size != 0);
 
     while (true) {
-        ssize_t bytes = recv(fd, data, data_size, MSG_PEEK); 
+        ssize_t bytes = recv(fd, data, data_size, MSG_PEEK);
         assert(bytes <= (ssize_t)data_size);
 
+        #ifdef __linux__
         if ((bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
             || (0 < bytes && bytes < (ssize_t)data_size)) {
             if (wait) continue;
             else return false;
         }
-
         pcr(bytes, "read failed");
+        #elif defined(WINDOWS)
+        int error = WSAGetLastError();
+        if ((bytes < 0 && error == WSAEWOULDBLOCK)
+        || (0 < bytes && bytes < data_size)) {
+            if (wait) continue;
+            else return false;
+        } else if (bytes < 0) {
+            fprintf(stderr, "read failed: %d\n", error);
+            exit(EXIT_FAILURE);
+        }
+        #endif // defined
 
         if (bytes == 0) {
             fprintf(stderr, "Disconnected\n");
-            exit(-1);
+            exit(EXIT_FAILURE);
         }
-        
+
         recv(fd, data, data_size, 0);
         return true;
     }
@@ -672,13 +686,28 @@ bool readBytes(int fd, void* data, size_t data_size, bool wait) {
 void writeBytes(int fd, void* data, size_t data_size) {
     size_t bytes_sent = 0;
     while (bytes_sent < data_size) {
-        int ret = send(fd, (uint8_t*)data+bytes_sent, data_size-bytes_sent, MSG_NOSIGNAL);
+#ifdef __linux__
+        int ret = send(fd, (void*)((uint8_t*)data+bytes_sent), data_size-bytes_sent, MSG_NOSIGNAL);
+
         if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             continue;
         }
         pcr(ret, "Write error");
+#elif defined(WINDOWS)
+        int ret = send(fd, (void*)((uint8_t*)data+bytes_sent), data_size-bytes_sent, 0);
 
-        bytes_sent += ret; 
+        if (ret < 0) {
+            int error = WSAGetLastError();
+            if (error == WSAEWOULDBLOCK) {
+                continue;
+            } else {
+                fprintf(stderr, "send failed: %d\n", error);
+                exit(EXIT_FAILURE);
+            }
+        }
+#endif // defined
+
+        bytes_sent += ret;
     }
 }
 
@@ -784,7 +813,7 @@ struct NetworkClient {
 bool is_online = false;
 bool is_host = false;
 
-uint32_t curr_time; 
+uint32_t curr_time;
 
 struct Input input;
 
@@ -810,7 +839,7 @@ void getAddrAndPort(struct in_addr* addr, uint16_t* port) {
         pcr(result, "inet_pton failed");
 
         if (result == 0) {
-            printf("Invalid IP\n");     
+            printf("Invalid IP\n");
             continue;
         }
 
@@ -819,7 +848,7 @@ void getAddrAndPort(struct in_addr* addr, uint16_t* port) {
 
     // Get port
     while (true) {
-        printf("Choose a port: ");                                  
+        printf("Choose a port: ");
 
         // @todo ub in case of overflow
         int res = scanf("%hu", port);
@@ -831,17 +860,27 @@ void getAddrAndPort(struct in_addr* addr, uint16_t* port) {
         }
     }
 }
-
+/*
 void block(int fd) {
     pcr(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) & ~O_NONBLOCK),
         "Error setting O_NONBLOCK"
        );
 }
+*/
 
 void unblock(int fd) {
+#if defined(__linux__)
     pcr(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK),
         "Error setting O_NONBLOCK"
        );
+#elif defined(WINDOWS)
+    u_long mode = 1;
+    int res = ioctlsocket(fd, FIONBIO, &mode);
+    if (res != NO_ERROR) {
+        fprintf(stderr, "ioctlsocket failed: %d\n", res);
+    }
+
+#endif // defined
 }
 
 bool runMenu() {
@@ -869,7 +908,7 @@ bool runMenu() {
                     case LOCAL: {
                         is_online = false;
                         menu_mode = MN_MAIN_MENU;
-                    } break; 
+                    } break;
                     case ONLINE: {
                         is_online = true;
                         menu_mode = MN_HOST_OR_JOIN;
@@ -877,8 +916,8 @@ bool runMenu() {
                     case QUIT: {
                         mode = QUIT_GAME;
                     } break;
-                    }  
-                } 
+                    }
+                }
             }
         }
     } break;
@@ -961,14 +1000,14 @@ bool runMenu() {
                     }
 
                     menu_mode = MN_LOBBY;
-                }      
+                }
             }
         }
     } break;
     case MN_LOBBY: {
         enum Type {
             START_GAME,
-            UPDATE, 
+            UPDATE,
         };
 
         struct Packet {
@@ -982,9 +1021,7 @@ bool runMenu() {
             if (fd >= 0) {
                 writeBytes(fd, &game_state.players_size, sizeof(game_state.players_size));
 
-                pcr(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK),
-                        "Error setting O_NONBLOCK"
-                   );
+                unblock(fd);
 
                 host.fd[game_state.players_size++] = fd;
             }
@@ -1063,9 +1100,9 @@ bool runMenu() {
             msg[0] = "Continue";
         }
 
-        SDL_Color colors[BUTTONS_QTY]; 
+        SDL_Color colors[BUTTONS_QTY];
         for (size_t i = 0; i < BUTTONS_QTY; i++) {
-            colors[i] = menu.button_color;                
+            colors[i] = menu.button_color;
         }
 
         SDL_Rect hitboxes[BUTTONS_QTY];
@@ -1154,7 +1191,7 @@ bool runMenu() {
 
             char* p_msg[BUTTONS_QTY];
             for (size_t i = 0; i < BUTTONS_QTY; i++) {
-                p_msg[i] = msg[i]; 
+                p_msg[i] = msg[i];
             }
 
             SDL_Color colors[BUTTONS_QTY];
@@ -1178,7 +1215,7 @@ bool runMenu() {
                     pressed_button = true;
                     remap_menu.button_sel = true;
                     remap_menu.button_sel_i = i;
-                } 
+                }
             }
             if (!pressed_button) {
                 remap_menu.button_sel = false;
@@ -1198,7 +1235,7 @@ bool runMenu() {
                 game_state.players[remap_menu.sel_player_i].bindings[remap_menu.button_sel_i] = input.key_pressed;
                 remap_menu.button_sel = false;
             }
-        } 
+        }
     } break;
     case MN_OPTIONS_MENU: {
         enum {BUTTONS_SIZE = 2};
@@ -1221,7 +1258,7 @@ bool runMenu() {
 
         char* p_msg[BUTTONS_SIZE];
         for (size_t i = 0; i < BUTTONS_SIZE; i++) {
-            p_msg[i] = msg[i]; 
+            p_msg[i] = msg[i];
         }
 
         SDL_Color colors[BUTTONS_SIZE];
@@ -1337,7 +1374,7 @@ void runRunning() {
                 game_state = temp;
             }
         }
-    } 
+    }
 
     // Render
     for (size_t i = 0; i < game_state.players_size; i++) {
@@ -1372,15 +1409,15 @@ void runGameOver() {
             draw = false;
             max_score = game_state.players[i].score;
             winner = i;
-        }     
+        }
     }
 
     char msg[14];
 
-    if (draw) {      
+    if (draw) {
         strcpy(msg, "Draw");
     } else {
-        strcpy(msg, "Player 0 wins"); 
+        strcpy(msg, "Player 0 wins");
         msg[7] = winner + 1 + '0';
     }
 
@@ -1392,11 +1429,11 @@ void runGameOver() {
     renderMsg(msg, &game_over_rect, menu.button_color);
 }
 
-int main() {
+int main(int argc, char** argv) {
 #ifdef WINDOWS
     WSADATA wsa_data;
     if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != NO_ERROR) {
-        fprintf("WSAStartup failed: %d\n", WSAGetLastError());
+        fprintf(stderr, "WSAStartup failed: %d\n", WSAGetLastError());
         exit(EXIT_FAILURE);
     }
 #endif
