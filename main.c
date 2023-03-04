@@ -81,21 +81,26 @@ void printSdlError(char* message) {
     fprintf(stderr, ": %s\n", SDL_GetError());
 }
 
-void errnoAbort(char* message) {
-    perror(message);
-    exit(-1);
+void functionFailedAbort(char* function) {
+#if defined(__linux__)
+    fprintf(stderr, "%s failed: %s\n", function, strerror(errno));
+#elif defined(WINDOWS)
+    fprintf(stderr, "%s failed: %d\n", function, WSAGetLastError());
+#endif
+
+    exit(EXIT_FAILURE);
 }
 
-// posix check error
-int pcr(int ret, char* message) {
-    if (ret < 0) errnoAbort(message);
+// check return
+int cr(int ret, char* function) {
+    if (ret < 0) functionFailedAbort(function);
 
     return ret;
 }
 
-// posix check pointer
-void* pcp(void* p, char* message) {
-    if (!p) errnoAbort(message);
+// check pointer
+void* cp(void* p, char* function) {
+    if (!p) functionFailedAbort(function);
 
     return p;
 }
@@ -660,7 +665,7 @@ bool readBytes(int fd, void* data, size_t data_size, bool wait) {
             if (wait) continue;
             else return false;
         }
-        pcr(bytes, "read failed");
+        cr(bytes, "read");
         #elif defined(WINDOWS)
         int error = WSAGetLastError();
         if ((bytes < 0 && error == WSAEWOULDBLOCK)
@@ -668,8 +673,7 @@ bool readBytes(int fd, void* data, size_t data_size, bool wait) {
             if (wait) continue;
             else return false;
         } else if (bytes < 0) {
-            fprintf(stderr, "read failed: %d\n", error);
-            exit(EXIT_FAILURE);
+            functionFailedAbort("read");
         }
         #endif // defined
 
@@ -692,7 +696,7 @@ void writeBytes(int fd, void* data, size_t data_size) {
         if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             continue;
         }
-        pcr(ret, "Write error");
+        cr(ret, "write");
 #elif defined(WINDOWS)
         int ret = send(fd, (void*)((uint8_t*)data+bytes_sent), data_size-bytes_sent, 0);
 
@@ -705,7 +709,7 @@ void writeBytes(int fd, void* data, size_t data_size) {
                 exit(EXIT_FAILURE);
             }
         }
-#endif // defined
+#endif
 
         bytes_sent += ret;
     }
@@ -836,7 +840,7 @@ void getAddrAndPort(struct in_addr* addr, uint16_t* port) {
         }
 
         result = inet_pton(AF_INET, ip, addr);
-        pcr(result, "inet_pton failed");
+        cr(result, "inet_pton");
 
         if (result == 0) {
             printf("Invalid IP\n");
@@ -862,7 +866,7 @@ void getAddrAndPort(struct in_addr* addr, uint16_t* port) {
 }
 /*
 void block(int fd) {
-    pcr(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) & ~O_NONBLOCK),
+    cr(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) & ~O_NONBLOCK),
         "Error setting O_NONBLOCK"
        );
 }
@@ -870,16 +874,13 @@ void block(int fd) {
 
 void unblock(int fd) {
 #if defined(__linux__)
-    pcr(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK),
-        "Error setting O_NONBLOCK"
-       );
+    cr(fcntl(fd, F_SETFL, cr(fcntl(fd, F_GETFL, 0),
+                             "fcntl get") | O_NONBLOCK),
+        "fcntl set");
 #elif defined(WINDOWS)
     u_long mode = 1;
-    int res = ioctlsocket(fd, FIONBIO, &mode);
-    if (res != NO_ERROR) {
-        fprintf(stderr, "ioctlsocket failed: %d\n", res);
-    }
-
+    cr(ioctlsocket(fd, FIONBIO, &mode),
+       "ioctlsocket");
 #endif // defined
 }
 
@@ -948,7 +949,11 @@ bool runMenu() {
                     // @todo check if it is linux
                     // Init socket
                     int fd = socket(AF_INET, SOCK_STREAM, 0);
-                    pcr(fd, "Socket creation failed");
+#if defined(__linux__)
+                    cr(fd, "socket");
+#elif defined(WINDOWS)
+                    if (fd == INVALID_SOCKET) functionFailedAbort("socket");
+#endif
 
                     memset(&network.host_addr, 0, sizeof(network.host_addr));
                     network.host_addr.sin_family = AF_INET;
@@ -966,12 +971,12 @@ bool runMenu() {
                         unblock(host.fd[0]);
 
                         // @todo use select or poll?
-                        pcr(bind(host.fd[0], (struct sockaddr*)&network.host_addr, sizeof(network.host_addr)),
-                                "Bind failed"
+                        cr(bind(host.fd[0], (struct sockaddr*)&network.host_addr, sizeof(network.host_addr)),
+                                "bind"
                            );
 
-                        pcr(listen(host.fd[0], MAX_PLAYERS_SIZE),
-                                "Listening failed"
+                        cr(listen(host.fd[0], MAX_PLAYERS_SIZE),
+                                "listen"
                            );
 
                         printf("Listening\n");
@@ -983,12 +988,8 @@ bool runMenu() {
 
                         while (true) {
                             // Original: if errno == EINPROGRESS || connect >= 0 break
-                            int result = connect(fd, (struct sockaddr*) &network.host_addr, sizeof(network.host_addr));
-
-                            if (result < 0) {
-                                if (errno == EINPROGRESS) continue;
-                                else errnoAbort("Connection failed");
-                            }
+                            cr(connect(fd, (struct sockaddr*) &network.host_addr, sizeof(network.host_addr)),
+                               "connect");
 
                             break;
                         }
@@ -1019,11 +1020,17 @@ bool runMenu() {
             socklen_t len = sizeof(network.host_addr);
             int fd = accept(host.fd[0], (struct sockaddr*) &network.host_addr, &len);
             if (fd >= 0) {
-                writeBytes(fd, &game_state.players_size, sizeof(game_state.players_size));
-
                 unblock(fd);
-
                 host.fd[game_state.players_size++] = fd;
+
+                writeBytes(fd, &game_state.players_size, sizeof(game_state.players_size));
+            }
+#if defined(__linux__)
+            else if (fd < 0 && errno != EWOULDBLOCK && errno != EAGAIN) {
+#elif defined(WINDOWS)
+            else if (fd == INVALID_SOCKET && WSAGetLastError() != WSAEWOULDBLOCK) {
+#endif
+                functionFailedAbort("accept");
             }
 
             if (curr_time > lobby.start + lobby.delay) {
@@ -1079,6 +1086,7 @@ bool runMenu() {
 
         renderMsgsCentered(msgs, MAX_PLAYERS_SIZE+1, hitboxes, colors);
 
+        // Events
         if (input.is_mouse_clicked) {
             if (is_host) {
                 if (rectContainsPos(&hitboxes[READY_BUTTON], &input.mouse_pos)) {
@@ -1380,7 +1388,7 @@ void runRunning() {
     for (size_t i = 0; i < game_state.players_size; i++) {
         if (game_state.players[i].score > 999) {
             fprintf(stderr, "Score too big!\n");
-            exit(-1);
+            exit(EXIT_FAILURE);
         }
     }
 
