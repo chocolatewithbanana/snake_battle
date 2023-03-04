@@ -633,7 +633,7 @@ void render(struct GameState* game_state) {
 
     // Dead bodies
     for (size_t i = 0; i < game_state->dead_bodies_size; i++) {
-        SDL_SetRenderDrawColor(renderer, 0x02, 0x30, 0x20, 0xFF);
+        SDL_SetRenderDrawColor(renderer, 0x0F, 0x8C, 0x4E, 0xFF);
         SDL_Rect rect = posToRect(&game_state->dead_bodies[i]);
         SDL_RenderFillRect(renderer, &rect);
     }
